@@ -153,7 +153,7 @@ class Stand:
         self.status = {"bot": "не запущен", "last_poll": None, "error": "", "autopilot": "не запущен"}
         self.autopilot = Autopilot(lambda: self.assistant, _avatar_client,
                                    avatar_id=os.environ.get("LIVEAVATAR_AVATAR_ID", ""),
-                                   base_url=os.environ.get("STAND_URL", "http://95.140.147.248:8080"),
+                                   base_url=os.environ.get("STAND_URL", "https://194-87-110-81.sslip.io"),
                                    categories={c.strip() for c in os.environ.get("AVATAR_CATEGORIES", "операционная").split(",")
                                                if c.strip()})
 
