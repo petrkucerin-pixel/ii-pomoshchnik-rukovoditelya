@@ -31,6 +31,37 @@ def test_index_and_metrics(client, tmp_path):
     assert (tmp_path / "ivan_petrov.sqlite").exists()
 
 
+class FakeReal:
+    def __init__(self, fail=False):
+        self.sent, self.fail = [], fail
+
+    def fetch_new(self):
+        if self.fail:
+            raise RuntimeError("Не удалось прочитать почту Яндекса по IMAP (OSError)")
+        return ["настоящее письмо"]
+
+    def send(self, to, subject, body, in_reply_to=None):
+        self.sent.append(to)
+        return "<real@yandex>"
+
+
+def test_combined_mailbox_routes_real_and_fictional(tmp_path):
+    from pomoshnik.channels.mail import CsvMailbox, OutlookStub
+    stub = OutlookStub(CsvMailbox(srv.TASK / "inbox.csv"), tmp_path / "sent.jsonl")
+    real = FakeReal()
+    box = srv.CombinedMailbox(stub, real)
+    assert len(box.fetch_new()) == 81
+    box.send("p02@company.example", "Fwd", "x")
+    box.send("pit@yandex.ru", "Протокол", "x")
+    assert real.sent == ["pit@yandex.ru"] and len(stub.sent()) == 1
+
+
+def test_combined_mailbox_survives_yandex_failure(tmp_path):
+    from pomoshnik.channels.mail import CsvMailbox, OutlookStub
+    box = srv.CombinedMailbox(OutlookStub(CsvMailbox(srv.TASK / "inbox.csv"), tmp_path / "s.jsonl"), FakeReal(fail=True))
+    assert len(box.fetch_new()) == 80 and "IMAP" in box.last_error
+
+
 def test_meeting_before_bot_bound(client):
     r = client.post("/meeting", data={"title": "x", "transcript": "y"})
     assert r.status_code == 409

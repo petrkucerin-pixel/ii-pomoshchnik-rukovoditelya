@@ -4,7 +4,6 @@
 """
 from __future__ import annotations
 
-import csv
 import html
 import json
 import logging
@@ -14,7 +13,6 @@ import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
-from types import SimpleNamespace
 
 import httpx
 from fastapi import FastAPI, Form
@@ -24,6 +22,7 @@ from yadro.clock import TZ_EKB, SystemClock
 from yadro.journal import Journal
 
 from .assistant import Assistant
+from .channels.mail import CsvMailbox, OutlookStub, YandexMailbox
 from .channels.telegram import TelegramError, TelegramPult, TelegramRateLimit
 from .llm import from_env, load_dotenv
 from .metrics import compute_metrics
@@ -36,26 +35,38 @@ TASK = ROOT / "data" / "task"
 log = logging.getLogger("pomoshnik")
 
 
-class DemoMailbox:
-    """Учебный ящик из inbox.csv. Отправленное пишется в runtime/<профиль>_outbox.jsonl (заглушка Outlook)."""
+class CombinedMailbox:
+    """Учебные письма заказчика (заглушка Outlook) + настоящий ящик Яндекса.
 
-    def __init__(self, csv_path: Path, out_path: Path):
-        self.csv_path, self.out_path, self.given = csv_path, out_path, False
+    Вымышленные адреса *.example уходят в заглушку Outlook, настоящие — через Яндекс.
+    """
+
+    def __init__(self, stub: OutlookStub, real: YandexMailbox | None):
+        self.stub, self.real = stub, real
+        self.last_error = ""
 
     def fetch_new(self):
-        if self.given:
-            return []
-        self.given = True
-        return [SimpleNamespace(id=r["id"], from_name=r["from_name"], from_email=r["from_email"],
-                                subject=r["subject"], body=r["body"])
-                for r in csv.DictReader(open(self.csv_path, encoding="utf-8"))]
+        letters = self.stub.fetch_new()
+        if self.real:
+            try:
+                letters += self.real.fetch_new()
+            except RuntimeError as e:          # сбой Яндекса не должен останавливать разбор учебной почты
+                self.last_error = str(e)
+        return letters
 
     def send(self, to, subject, body, in_reply_to=None):
-        rec = {"to": to, "subject": subject, "body": body, "in_reply_to": in_reply_to,
-               "at": datetime.now(TZ_EKB).isoformat()}
-        with open(self.out_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-        return f"<stub-{time.time_ns()}@outlook.stub>"
+        if self.real and not to.lower().endswith(".example"):
+            return self.real.send(to, subject, body, in_reply_to=in_reply_to)
+        return self.stub.send(to, subject, body, in_reply_to=in_reply_to)
+
+
+def make_mailbox(profile_id: str) -> CombinedMailbox:
+    stub = OutlookStub(CsvMailbox(TASK / "inbox.csv"), RUNTIME / f"{profile_id}_outlook_sent.jsonl")
+    real = None
+    if os.environ.get("MAIL_PROVIDER") == "yandex" and os.environ.get("YANDEX_APP_PASSWORD"):
+        real = YandexMailbox(os.environ["YANDEX_ADDRESS"], os.environ["YANDEX_APP_PASSWORD"].replace(" ", ""),
+                             state_path=RUNTIME / f"{profile_id}_imap.json")
+    return CombinedMailbox(stub, real)
 
 
 def _bind_chat(token: str) -> str:
@@ -97,7 +108,7 @@ class Stand:
         self.llm = from_env(on_usage=lambda u: self.journal.log_llm_call(
             "openai-compatible", u.model, u.input_tokens, u.output_tokens, u.cost_usd, u.duration_ms))
         self.profile = load_profile(pdir, org_path=TASK / "org_structure.csv")
-        self.mail = DemoMailbox(TASK / "inbox.csv", RUNTIME / f"{self.profile_id}_outbox.jsonl")
+        self.mail = make_mailbox(self.profile_id)
         self.assistant: Assistant | None = None
         self.status = {"bot": "не запущен", "last_poll": None, "error": ""}
 
