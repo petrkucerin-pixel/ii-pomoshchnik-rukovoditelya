@@ -1,0 +1,532 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Kuznitsa//Synthetic//RU
+BEGIN:VEVENT
+UID:ev001@company.example
+DTSTART:20261207T100000
+DTEND:20261207T103000
+SUMMARY:Планёрка направления
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Ольга Смирнова:mailto:p02@company.example
+ATTENDEE;CN=Дмитрий Козлов:mailto:p03@company.example
+ATTENDEE;CN=Анна Волкова:mailto:p04@company.example
+ATTENDEE;CN=Сергей Морозов:mailto:p05@company.example
+ATTENDEE;CN=Мария Лебедева:mailto:p06@company.example
+ATTENDEE;CN=Алексей Новиков:mailto:p07@company.example
+ATTENDEE;CN=Екатерина Соколова:mailto:p08@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev002@company.example
+DTSTART:20261208T100000
+DTEND:20261208T103000
+SUMMARY:Планёрка направления
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Ольга Смирнова:mailto:p02@company.example
+ATTENDEE;CN=Дмитрий Козлов:mailto:p03@company.example
+ATTENDEE;CN=Анна Волкова:mailto:p04@company.example
+ATTENDEE;CN=Сергей Морозов:mailto:p05@company.example
+ATTENDEE;CN=Мария Лебедева:mailto:p06@company.example
+ATTENDEE;CN=Алексей Новиков:mailto:p07@company.example
+ATTENDEE;CN=Екатерина Соколова:mailto:p08@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev003@company.example
+DTSTART:20261209T100000
+DTEND:20261209T103000
+SUMMARY:Планёрка направления
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Ольга Смирнова:mailto:p02@company.example
+ATTENDEE;CN=Дмитрий Козлов:mailto:p03@company.example
+ATTENDEE;CN=Анна Волкова:mailto:p04@company.example
+ATTENDEE;CN=Сергей Морозов:mailto:p05@company.example
+ATTENDEE;CN=Мария Лебедева:mailto:p06@company.example
+ATTENDEE;CN=Алексей Новиков:mailto:p07@company.example
+ATTENDEE;CN=Екатерина Соколова:mailto:p08@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev004@company.example
+DTSTART:20261210T100000
+DTEND:20261210T103000
+SUMMARY:Планёрка направления
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Ольга Смирнова:mailto:p02@company.example
+ATTENDEE;CN=Дмитрий Козлов:mailto:p03@company.example
+ATTENDEE;CN=Анна Волкова:mailto:p04@company.example
+ATTENDEE;CN=Сергей Морозов:mailto:p05@company.example
+ATTENDEE;CN=Мария Лебедева:mailto:p06@company.example
+ATTENDEE;CN=Алексей Новиков:mailto:p07@company.example
+ATTENDEE;CN=Екатерина Соколова:mailto:p08@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev005@company.example
+DTSTART:20261211T100000
+DTEND:20261211T103000
+SUMMARY:Планёрка направления
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Ольга Смирнова:mailto:p02@company.example
+ATTENDEE;CN=Дмитрий Козлов:mailto:p03@company.example
+ATTENDEE;CN=Анна Волкова:mailto:p04@company.example
+ATTENDEE;CN=Сергей Морозов:mailto:p05@company.example
+ATTENDEE;CN=Мария Лебедева:mailto:p06@company.example
+ATTENDEE;CN=Алексей Новиков:mailto:p07@company.example
+ATTENDEE;CN=Екатерина Соколова:mailto:p08@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev006@company.example
+DTSTART:20261207T110000
+DTEND:20261207T120000
+SUMMARY:Статус продаж SMB
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Ольга Смирнова:mailto:p02@company.example
+ATTENDEE;CN=Алексей Новиков:mailto:p07@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev007@company.example
+DTSTART:20261207T150000
+DTEND:20261207T160000
+SUMMARY:Статус e-commerce
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Анна Волкова:mailto:p04@company.example
+ATTENDEE;CN=Дмитрий Козлов:mailto:p03@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev008@company.example
+DTSTART:20261208T110000
+DTEND:20261208T120000
+SUMMARY:Партнёрский канал: воронка
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Сергей Морозов:mailto:p05@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev009@company.example
+DTSTART:20261208T140000
+DTEND:20261208T153000
+SUMMARY:Комитет коммерческого директора
+CATEGORIES:руководство
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Виктор Орлов:mailto:p09@company.example
+ATTENDEE;CN=Наталья Павлова:mailto:p10@company.example
+ATTENDEE;CN=Павел Егоров:mailto:p12@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev010@company.example
+DTSTART:20261209T120000
+DTEND:20261209T130000
+SUMMARY:Клиентский сервис: качество
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Мария Лебедева:mailto:p06@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev011@company.example
+DTSTART:20261209T160000
+DTEND:20261209T170000
+SUMMARY:Встреча с клиентом «Ромашка-Ритейл»
+CATEGORIES:клиент
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Ольга Смирнова:mailto:p02@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev012@company.example
+DTSTART:20261210T110000
+DTEND:20261210T114500
+SUMMARY:Маркетинг: кампании
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Дмитрий Козлов:mailto:p03@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev013@company.example
+DTSTART:20261210T150000
+DTEND:20261210T160000
+SUMMARY:Бюджет и прогноз
+CATEGORIES:деньги
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Наталья Павлова:mailto:p10@company.example
+ATTENDEE;CN=Алексей Новиков:mailto:p07@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev014@company.example
+DTSTART:20261211T120000
+DTEND:20261211T130000
+SUMMARY:Встреча с партнёром «Облако Плюс»
+CATEGORIES:партнёр
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Сергей Морозов:mailto:p05@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev015@company.example
+DTSTART:20261211T160000
+DTEND:20261211T163000
+SUMMARY:Подведение итогов недели
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Ольга Смирнова:mailto:p02@company.example
+ATTENDEE;CN=Дмитрий Козлов:mailto:p03@company.example
+ATTENDEE;CN=Анна Волкова:mailto:p04@company.example
+ATTENDEE;CN=Сергей Морозов:mailto:p05@company.example
+ATTENDEE;CN=Мария Лебедева:mailto:p06@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev016@company.example
+DTSTART:20261207T133000
+DTEND:20261207T140000
+SUMMARY:Синк с ИТ
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Ольга Смирнова:mailto:p02@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev017@company.example
+DTSTART:20261208T163000
+DTEND:20261208T170000
+SUMMARY:Интервью кандидата
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Мария Лебедева:mailto:p06@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev018@company.example
+DTSTART:20261209T103000
+DTEND:20261209T110000
+SUMMARY:Согласование КП
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Ольга Смирнова:mailto:p02@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev019@company.example
+DTSTART:20261209T143000
+DTEND:20261209T150000
+SUMMARY:Согласование КП
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Мария Лебедева:mailto:p06@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev020@company.example
+DTSTART:20261210T123000
+DTEND:20261210T130000
+SUMMARY:Синк с ИТ
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Мария Лебедева:mailto:p06@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev021@company.example
+DTSTART:20261210T173000
+DTEND:20261210T180000
+SUMMARY:Согласование КП
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Игорь Фёдоров:mailto:p11@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev022@company.example
+DTSTART:20261211T103000
+DTEND:20261211T110000
+SUMMARY:Созвон с вендором
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Ольга Смирнова:mailto:p02@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev023@company.example
+DTSTART:20261208T173000
+DTEND:20261208T180000
+SUMMARY:Согласование КП
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Анна Волкова:mailto:p04@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev024@company.example
+DTSTART:20261211T143000
+DTEND:20261211T150000
+SUMMARY:Созвон с вендором
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Павел Егоров:mailto:p12@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev025@company.example
+DTSTART:20261208T090000
+DTEND:20261208T093000
+SUMMARY:1:1 с Ольгой Смирновой
+CATEGORIES:один_на_один
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Ольга Смирнова:mailto:p02@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev026@company.example
+DTSTART:20261214T100000
+DTEND:20261214T103000
+SUMMARY:Планёрка направления
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Ольга Смирнова:mailto:p02@company.example
+ATTENDEE;CN=Дмитрий Козлов:mailto:p03@company.example
+ATTENDEE;CN=Анна Волкова:mailto:p04@company.example
+ATTENDEE;CN=Сергей Морозов:mailto:p05@company.example
+ATTENDEE;CN=Мария Лебедева:mailto:p06@company.example
+ATTENDEE;CN=Алексей Новиков:mailto:p07@company.example
+ATTENDEE;CN=Екатерина Соколова:mailto:p08@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev027@company.example
+DTSTART:20261215T100000
+DTEND:20261215T103000
+SUMMARY:Планёрка направления
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Ольга Смирнова:mailto:p02@company.example
+ATTENDEE;CN=Дмитрий Козлов:mailto:p03@company.example
+ATTENDEE;CN=Анна Волкова:mailto:p04@company.example
+ATTENDEE;CN=Сергей Морозов:mailto:p05@company.example
+ATTENDEE;CN=Мария Лебедева:mailto:p06@company.example
+ATTENDEE;CN=Алексей Новиков:mailto:p07@company.example
+ATTENDEE;CN=Екатерина Соколова:mailto:p08@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev028@company.example
+DTSTART:20261216T100000
+DTEND:20261216T103000
+SUMMARY:Планёрка направления
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Ольга Смирнова:mailto:p02@company.example
+ATTENDEE;CN=Дмитрий Козлов:mailto:p03@company.example
+ATTENDEE;CN=Анна Волкова:mailto:p04@company.example
+ATTENDEE;CN=Сергей Морозов:mailto:p05@company.example
+ATTENDEE;CN=Мария Лебедева:mailto:p06@company.example
+ATTENDEE;CN=Алексей Новиков:mailto:p07@company.example
+ATTENDEE;CN=Екатерина Соколова:mailto:p08@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev029@company.example
+DTSTART:20261217T100000
+DTEND:20261217T103000
+SUMMARY:Планёрка направления
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Ольга Смирнова:mailto:p02@company.example
+ATTENDEE;CN=Дмитрий Козлов:mailto:p03@company.example
+ATTENDEE;CN=Анна Волкова:mailto:p04@company.example
+ATTENDEE;CN=Сергей Морозов:mailto:p05@company.example
+ATTENDEE;CN=Мария Лебедева:mailto:p06@company.example
+ATTENDEE;CN=Алексей Новиков:mailto:p07@company.example
+ATTENDEE;CN=Екатерина Соколова:mailto:p08@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev030@company.example
+DTSTART:20261218T100000
+DTEND:20261218T103000
+SUMMARY:Планёрка направления
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Ольга Смирнова:mailto:p02@company.example
+ATTENDEE;CN=Дмитрий Козлов:mailto:p03@company.example
+ATTENDEE;CN=Анна Волкова:mailto:p04@company.example
+ATTENDEE;CN=Сергей Морозов:mailto:p05@company.example
+ATTENDEE;CN=Мария Лебедева:mailto:p06@company.example
+ATTENDEE;CN=Алексей Новиков:mailto:p07@company.example
+ATTENDEE;CN=Екатерина Соколова:mailto:p08@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev031@company.example
+DTSTART:20261214T110000
+DTEND:20261214T120000
+SUMMARY:Статус продаж SMB
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Ольга Смирнова:mailto:p02@company.example
+ATTENDEE;CN=Алексей Новиков:mailto:p07@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev032@company.example
+DTSTART:20261214T150000
+DTEND:20261214T160000
+SUMMARY:Статус e-commerce
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Анна Волкова:mailto:p04@company.example
+ATTENDEE;CN=Дмитрий Козлов:mailto:p03@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev033@company.example
+DTSTART:20261215T110000
+DTEND:20261215T120000
+SUMMARY:Партнёрский канал: воронка
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Сергей Морозов:mailto:p05@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev034@company.example
+DTSTART:20261215T140000
+DTEND:20261215T153000
+SUMMARY:Комитет коммерческого директора
+CATEGORIES:руководство
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Виктор Орлов:mailto:p09@company.example
+ATTENDEE;CN=Наталья Павлова:mailto:p10@company.example
+ATTENDEE;CN=Павел Егоров:mailto:p12@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev035@company.example
+DTSTART:20261216T120000
+DTEND:20261216T130000
+SUMMARY:Клиентский сервис: качество
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Мария Лебедева:mailto:p06@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev036@company.example
+DTSTART:20261216T160000
+DTEND:20261216T170000
+SUMMARY:Встреча с клиентом «Ромашка-Ритейл»
+CATEGORIES:клиент
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Ольга Смирнова:mailto:p02@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev037@company.example
+DTSTART:20261217T110000
+DTEND:20261217T114500
+SUMMARY:Маркетинг: кампании
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Дмитрий Козлов:mailto:p03@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev038@company.example
+DTSTART:20261217T150000
+DTEND:20261217T160000
+SUMMARY:Бюджет и прогноз
+CATEGORIES:деньги
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Наталья Павлова:mailto:p10@company.example
+ATTENDEE;CN=Алексей Новиков:mailto:p07@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev039@company.example
+DTSTART:20261218T120000
+DTEND:20261218T130000
+SUMMARY:Встреча с партнёром «Облако Плюс»
+CATEGORIES:партнёр
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Сергей Морозов:mailto:p05@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev040@company.example
+DTSTART:20261218T160000
+DTEND:20261218T163000
+SUMMARY:Подведение итогов недели
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Ольга Смирнова:mailto:p02@company.example
+ATTENDEE;CN=Дмитрий Козлов:mailto:p03@company.example
+ATTENDEE;CN=Анна Волкова:mailto:p04@company.example
+ATTENDEE;CN=Сергей Морозов:mailto:p05@company.example
+ATTENDEE;CN=Мария Лебедева:mailto:p06@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev041@company.example
+DTSTART:20261214T133000
+DTEND:20261214T140000
+SUMMARY:Синк с ИТ
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Игорь Фёдоров:mailto:p11@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev042@company.example
+DTSTART:20261215T163000
+DTEND:20261215T170000
+SUMMARY:Интервью кандидата
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Мария Лебедева:mailto:p06@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev043@company.example
+DTSTART:20261216T103000
+DTEND:20261216T110000
+SUMMARY:Интервью кандидата
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Павел Егоров:mailto:p12@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev044@company.example
+DTSTART:20261216T143000
+DTEND:20261216T150000
+SUMMARY:Согласование КП
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Ольга Смирнова:mailto:p02@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev045@company.example
+DTSTART:20261217T123000
+DTEND:20261217T130000
+SUMMARY:Разбор жалобы
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Павел Егоров:mailto:p12@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev046@company.example
+DTSTART:20261217T173000
+DTEND:20261217T180000
+SUMMARY:Разбор жалобы
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Павел Егоров:mailto:p12@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev047@company.example
+DTSTART:20261218T103000
+DTEND:20261218T110000
+SUMMARY:Интервью кандидата
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Ольга Смирнова:mailto:p02@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev048@company.example
+DTSTART:20261215T173000
+DTEND:20261215T180000
+SUMMARY:Синк с ИТ
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Ольга Смирнова:mailto:p02@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev049@company.example
+DTSTART:20261218T143000
+DTEND:20261218T150000
+SUMMARY:Согласование договора
+CATEGORIES:операционная
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Игорь Фёдоров:mailto:p11@company.example
+END:VEVENT
+BEGIN:VEVENT
+UID:ev050@company.example
+DTSTART:20261215T090000
+DTEND:20261215T093000
+SUMMARY:1:1 с Ольгой Смирновой
+CATEGORIES:один_на_один
+ORGANIZER:mailto:p01@company.example
+ATTENDEE;CN=Ольга Смирнова:mailto:p02@company.example
+END:VEVENT
+END:VCALENDAR
