@@ -3,8 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#245c73">
+  <meta name="theme-color" content="#13407e">
   <title>Сегодня · Кабинет руководителя</title>
+  <link rel="icon" href="/static/theme/img/logo.svg">
+  <link rel="stylesheet" href="/static/theme/theme.css">
   <link rel="stylesheet" href="/static/cabinet/cabinet.css">
   <script defer src="/static/cabinet/cabinet.js"></script>
 </head>
@@ -29,16 +31,17 @@
   <a class="skip" href="#main">Перейти к содержимому</a>
   <header>
     <div class="bar">
-      <a class="brand" href="#today">
-        <span class="brand-mark"><svg class="icon" aria-hidden="true"><use href="#i-brand"/></svg></span>
-        <span>Кабинет <strong>руководителя</strong></span>
-      </a>
-      <nav aria-label="Разделы кабинета">
+      <nav class="t-nav" aria-label="Разделы кабинета">
+        <span class="t-brand brand">
+          <span class="brand-mark"><svg class="icon" aria-hidden="true"><use href="#i-brand"/></svg></span>
+          <span>ИИ-помощник</span>
+        </span>
         <a href="#today"><svg class="icon" aria-hidden="true"><use href="#i-today"/></svg>Сегодня</a>
         <a href="#mail"><svg class="icon" aria-hidden="true"><use href="#i-mail"/></svg>Переписка</a>
         <a href="#meetings"><svg class="icon" aria-hidden="true"><use href="#i-meetings"/></svg>Совещания</a>
         <a href="#memory"><svg class="icon" aria-hidden="true"><use href="#i-memory"/></svg>Память</a>
         <a href="#profile"><svg class="icon" aria-hidden="true"><use href="#i-profile"/></svg>Профиль</a>
+        <span class="t-spacer"></span>
       </nav>
     </div>
   </header>

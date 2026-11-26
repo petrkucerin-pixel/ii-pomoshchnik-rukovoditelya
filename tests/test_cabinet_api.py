@@ -231,3 +231,10 @@ def test_memory_and_profile(env):
     p = c.get("/api/profile").json()
     assert p["name"] == "Иван Петров" and "деньги" in p["confirm"]
     assert len(c.get("/api/journal", params={"limit": 3}).json()["actions"]) == 3
+
+
+def test_metrics_count_incoming_letters_only(env):
+    c, a, _ = env
+    m = c.get("/api/metrics").json()
+    assert any(x["kind"] == "mail_sent" for x in a.j.actions())
+    assert m["letters"] == len(ROWS) == 84

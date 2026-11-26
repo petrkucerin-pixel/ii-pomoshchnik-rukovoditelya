@@ -32,7 +32,48 @@ function toggle(label, active, onClick) {
 }
 
 function card(title, symbol, ...body) {
-  return el("article", "card", el("h2", "card-heading", icon(symbol), title), ...body);
+  return el("article", "card t-card", el("h2", "card-heading", icon(symbol), title), ...body);
+}
+
+// Коралловая иллюстрация в углу карточки — облик «Голубое стекло» (/static/theme/).
+function illus(node, name) {
+  const img = el("img", "t-illus");
+  img.src = "/static/theme/img/" + name + ".svg";
+  img.alt = "";
+  node.prepend(img);
+  node.classList.add("has-illus");
+  return node;
+}
+
+function plural(n, forms) {
+  const a = Math.abs(n) % 100, b = a % 10;
+  return forms[a > 10 && a < 20 ? 2 : b === 1 ? 0 : b >= 2 && b <= 4 ? 1 : 2];
+}
+
+function greeting() {
+  const h = new Date().getHours();
+  return h < 5 ? "Доброй ночи" : h < 12 ? "Доброе утро" : h < 18 ? "Добрый день" : "Добрый вечер";
+}
+
+function hero(d, queue) {
+  const art = el("img", "t-hero-art");
+  art.src = "/static/theme/img/hero.svg";
+  art.alt = "";
+  const n = d.decisions.length, m = d.meetings.length;
+  const letters = d.metrics["писем разобрано"], share = d.metrics["без руководителя"];
+  const toQueue = button("Решения · " + n, () => queue.scrollIntoView({behavior: "smooth", block: "start"}), "t-btn t-btn--coral");
+  const week = el("a", "t-btn t-btn--ghost", "Неделя встреч");
+  week.href = "#meetings";
+  return el("section", "t-hero",
+    el("div", "t-hero-text",
+      el("div", "t-kicker", "ИИ-помощник руководителя · " + dateLabel(d.day, {weekday: "long", day: "numeric", month: "long"})),
+      el("h1", "hero-title", greeting() + ", " + d.leader),
+      el("div", "t-rule"),
+      el("div", "t-kicker", m + " " + plural(m, ["встреча", "встречи", "встреч"]) + " · " +
+        (n ? n + " " + plural(n, ["решение ждёт", "решения ждут", "решений ждут"]) + " только вас" : "решений, которые ждут вас, нет")),
+      letters == null ? null : el("div", "t-kicker", "Разобрано писем: " + letters + " · " + share + " — без вашего участия"),
+      el("div", "hero-actions", toQueue, week)),
+    art);
 }
 
 const hint = text => el("p", "muted", text);
@@ -178,12 +219,14 @@ function todayPage(host) {
     const schedule = rows(d.meetings, m => button(
       el("span", "time-row", el("strong", "", interval(m)), el("span", "", m.title), icon("arrow")),
       () => openMeeting(m), "row-link"), "Встреч на сегодня нет.");
-    const date = el("div", "date-chip", icon("meetings"), dateLabel(d.day, {weekday: "long", day: "numeric", month: "long"}));
-    mount.replaceChildren(el("div", "page-title", el("h1", "", "Сегодня"), date), metricCards(d.metrics),
-      el("div", "dashboard", stack(queue, card("Риски", "alert", bullets(d.risks, "Рисков не зафиксировано.")),
+    illus(queue, "mail");
+    const risks = card("Риски", "alert", bullets(d.risks, "Рисков не зафиксировано."));
+    risks.classList.add("t-card--coral");
+    mount.replaceChildren(hero(d, queue), metricCards(d.metrics),
+      el("div", "dashboard", stack(queue, risks,
         card("Задачи", "list", el("h3", "", "Просроченные"), rows(d.overdue, taskRow, "Просроченных задач нет."),
           el("h3", "", "Ближайшие"), rows(d.due_soon, taskRow, "Ближайших сроков нет."))),
-      stack(card("Встречи дня", "meetings", schedule),
+      stack(illus(card("Встречи дня", "meetings", schedule), "calendar"),
         card("Окна для фокуса", "focus", rows(d.focus, f => el("p", "focus-row", interval(f)), "Свободных окон нет.")),
         card("Сводка помощника", "mail", bullets(d.digest, "Пока нет записей.")))));
   });
@@ -513,7 +556,7 @@ function meetingsPage(host) {
     let day = requested?.day || today, selected = requested?.uid, tab = "protocols", openId = null;
     const board = el("div"), detail = el("div"), records = el("div"), tabs = el("div", "tabs");
     const toolbar = el("div", "calendar-toolbar");
-    const calendar = el("article", "card calendar", toolbar, board);
+    const calendar = el("article", "card t-card calendar", toolbar, board);
     const transcript = transcriptForm(id => {
       openId = id;
       tab = "protocols";
@@ -521,7 +564,7 @@ function meetingsPage(host) {
       refreshCalendar();
       tabs.scrollIntoView();
     });
-    mount.replaceChildren(calendar, detail, el("div", "card", tabs, records),
+    mount.replaceChildren(calendar, detail, el("div", "card t-card", tabs, records),
       card("Расшифровка → протокол", "file", transcript.form));
     const pending = new Set();
     async function mutate(id, suffix, payload) {
@@ -633,7 +676,7 @@ function memoryPage(host) {
     });
   }
   form.append(query, formSubmit(form, "Найти", search));
-  host.append(el("div", "dashboard", card("Поиск по памяти", "memory", form, results), changes));
+  host.append(el("div", "dashboard", illus(card("Поиск по памяти", "memory", form, results), "memory"), changes));
   search();
   load(changes, async mount => {
     const d = await api("/api/edits");
@@ -659,11 +702,11 @@ function profilePage(host) {
       meta(stamp(a.at), {assistant: "Помощник", human: "Руководитель"}[a.actor] || a.actor),
       el("p", "", a.summary || readable(a.kind))), "Действий пока нет."));
     mount.replaceChildren(metricCards(metrics.cards), el("div", "dashboard", stack(profile,
-      card("Дополнительные метрики", "chart",
+      illus(card("Дополнительные метрики", "chart",
         el("p", "", "Писем без руководителя · " + metrics.letters_without_leader),
         el("p", "", "Доля писем без руководителя · " + (metrics.share_without_leader == null ? "—" :
           (metrics.share_without_leader * 100).toLocaleString("ru-RU", {maximumFractionDigits: 2}) + " %")),
-        el("p", "", "До утверждения протокола, мин · " + (metrics.protocol_minutes_to_approved ?? "—")))), rules), log);
+        el("p", "", "До утверждения протокола, мин · " + (metrics.protocol_minutes_to_approved ?? "—"))), "chart")), rules), log);
   });
 }
 

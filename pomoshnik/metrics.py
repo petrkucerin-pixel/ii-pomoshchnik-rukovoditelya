@@ -6,10 +6,12 @@ from yadro.journal import Journal
 
 def compute_metrics(j: Journal, protocols=None) -> dict:
     acts = j.actions()
-    mail = [a for a in acts if a["kind"].startswith("mail_")]
+    mail = [a for a in acts if a["kind"].startswith("mail_") and a["kind"] != "mail_sent"]   # входящие, не исходящие
     without = [a for a in mail if a["kind"] != "mail_спросить_руководителя"]
     saved_min = sum(a["payload"].get("minutes_saved", 0) for a in acts)
-    drafts = [a["payload"]["minutes_to_draft"] for a in acts if a["kind"] == "protocol_draft"]
+    # Отрицательное время бывает, когда встреча из учебного календаря «в будущем» относительно часов стенда — не считаем.
+    drafts = [a["payload"]["minutes_to_draft"] for a in acts
+              if a["kind"] == "protocol_draft" and a["payload"]["minutes_to_draft"] >= 0]
     approved = [a["payload"]["minutes_to_approved"] for a in acts
                 if a["kind"] == "protocol_sent" and a["payload"].get("minutes_to_approved") is not None]
     edits = sum(1 for a in acts if a["kind"] == "protocol_edit")
