@@ -104,3 +104,36 @@ def test_index_escapes_memory(client):
                                datetime(2026, 12, 8, tzinfo=TZ_EKB), "m1", "цитата из письма")])
     page = client.get("/classic").text
     assert "<script>x</script>" not in page and "&lt;script&gt;" in page
+
+
+class FakeLiveAvatar:
+    URL = "https://embed.liveavatar.com/v1/emb-1?orientation=horizontal"
+
+    def __init__(self):
+        self.prompt = ""
+
+    def avatar_status(self, avatar_id):
+        return "ACTIVE"
+
+    def create_context(self, name, prompt, opening):
+        self.prompt = prompt
+        return "ctx-1"
+
+    def voice_id(self):
+        return "voice-1"
+
+    def create_embed(self, avatar_id, context_id, voice_id):
+        return {"embed_id": "emb-1", "url": self.URL}
+
+
+def test_avatar_page_opens_avatar_in_own_window_on_http(client, monkeypatch, tmp_path):
+    la = FakeLiveAvatar()
+    monkeypatch.setattr(srv, "_avatar_client", lambda: la)
+    monkeypatch.setenv("LIVEAVATAR_AVATAR_ID", "dff45d08")
+    page = client.get("/avatar", params={"title": "Планёрка", "uid": "ev001@company.example"}).text
+    # на http браузер не даёт встроенному окну микрофон: аватар открывается отдельным окном на своём https
+    assert 'target="avatar"' in page and FakeLiveAvatar.URL.replace("&", "&amp;") in page
+    assert "isSecureContext" in page and "<iframe src=" not in page
+    assert "Встреча окончена" in page
+    state = (tmp_path / "avatar.json").read_text(encoding="utf-8")
+    assert "emb-1" in state and "ev001@company.example" in state

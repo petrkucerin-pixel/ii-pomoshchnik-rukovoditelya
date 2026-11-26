@@ -278,19 +278,42 @@ def avatar_page(title: str = "Еженедельная встреча коман
                              payload={"embed_id": embed_id, "questions": len(questions),
                                       "history_questions": len(history_questions), "history_chars": len(history)})
     e = html.escape
-    qs = "".join(f"<li>{e(q)}</li>" for q in questions) or "<li>прошлого протокола нет</li>"
+    qs = "".join(f"<li>{e(q)}</li>" for q in questions) or "<li>Утверждённого прошлого протокола нет.</li>"
+    hqs = "".join(f"<li>{e(q)}</li>" for q in history_questions) or "<li>Открытых вопросов нет.</li>"
+    # На http браузер не даёт встроенному окну доступ к микрофону и камере («Unable to load embed»).
+    # Поэтому аватар открывается отдельным окном на своём https. Если стенд на https — окно встраивается в страницу.
     return f"""<!doctype html><html lang=ru><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
 <title>Встреча с ИИ-помощником</title>
-<style>body{{font:15px system-ui,sans-serif;margin:0;background:#0f1a20;color:#e8eef1}} main{{max-width:1100px;margin:auto;padding:16px}}
-.frame{{position:relative;width:100%;aspect-ratio:16/9;background:#000;border-radius:12px;overflow:hidden}}
-iframe{{position:absolute;inset:0;width:100%;height:100%;border:0}}
-button{{min-height:44px;padding:0 18px;border:0;border-radius:10px;background:#2f855a;color:#fff;font:inherit;margin-top:12px}}
-a{{color:#9cd}}</style><main>
-<h1 style="font-size:18px">{e(title)} · ИИ-помощник {e(leader)}</h1>
-<div class=frame><iframe src="{e(url)}" allow="camera; microphone; autoplay; fullscreen"></iframe></div>
-<form method=post action=/avatar/finish><button>Встреча окончена — протокол на утверждение в Telegram</button></form>
-<h2 style="font-size:15px">Вопросы по прошлому протоколу</h2><ol>{qs}</ol>
-<p><a href="/">← экран помощника</a></p></main></html>"""
+<link rel="icon" href="/static/theme/img/logo.svg"><link rel="stylesheet" href="/static/theme/theme.css">
+<style>.stage{{position:relative;width:100%;aspect-ratio:16/9;border-radius:22px;overflow:hidden;display:grid;place-items:center;
+text-align:center;padding:24px;background:linear-gradient(135deg,#c9d8f2,#7f9fdc);border:1px solid var(--glass-border);box-shadow:var(--shadow)}}
+.stage img{{width:min(46%,340px)}} .stage iframe{{position:absolute;inset:0;width:100%;height:100%;border:0}}
+.stage .t-btn{{margin-top:14px}} ol{{margin:6px 0 0;padding-left:1.2em}} li{{margin:5px 0}}
+@media (max-width:600px){{.stage{{aspect-ratio:auto;min-height:340px}}}}</style>
+<div class="t-page">
+<div class="t-kicker">Встреча с ИИ-помощником · {e(leader)}</div>
+<h1 style="font-size:clamp(24px,4vw,40px);margin:6px 0 16px">{e(title)}</h1>
+<div class="stage" id="stage" data-src="{e(url)}">
+  <div><img src="/static/theme/img/hero.svg" alt="">
+  <div><a class="t-btn t-btn--coral" href="{e(url)}" target="avatar" rel="noopener">Открыть аватара и начать встречу</a></div>
+  <p class="t-small" style="color:var(--ink);max-width:560px;margin:12px auto 0">Аватар откроется в отдельном окне: на этом адресе
+  браузер не даёт встроенному окну микрофон. Разговаривайте там, затем вернитесь сюда и нажмите «Встреча окончена».</p></div>
+</div>
+<form method=post action=/avatar/finish style="margin-top:16px"><button class="t-btn">Встреча окончена — протокол на утверждение в Telegram</button></form>
+<div class="t-grid" style="margin-top:18px">
+  <section class="t-card t-span-6"><header><h2>Вопросы по прошлому протоколу</h2></header><ol>{qs}</ol></section>
+  <section class="t-card t-span-6"><header><h2>Вопросы из истории</h2></header><ol>{hqs}</ol></section>
+</div>
+<p class="t-footer"><a href="/#meetings">← к совещаниям</a> · аватар представляется ИИ-помощником</p>
+</div>
+<script>
+if (window.isSecureContext) {{
+  var stage = document.getElementById("stage"), frame = document.createElement("iframe");
+  frame.src = stage.dataset.src;
+  frame.allow = "camera; microphone; autoplay; fullscreen";
+  stage.replaceChildren(frame);
+}}
+</script></html>"""
 
 
 @app.post("/avatar/finish")
