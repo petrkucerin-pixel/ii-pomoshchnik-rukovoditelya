@@ -179,3 +179,64 @@ def test_reviser_runs_after_inbox_writes_people_not_leader(a, monkeypatch):
     assert any("риск" in r.lower() or "под риском" in r for r in asst.risks)
     assert all(m["to"] != "p01@company.example" for m in questions)
     assert asst.review_reports() == 0                 # повторно в тот же день не спрашивает
+
+
+# ---------------- TASK_06: память помощника ----------------
+def llm_with_memory(system, user):
+    if "память помощника" in system:
+        if "ждём до 12.12" in user:
+            return {"facts": [{"topic": "Облако Плюс", "kind": "партнёр", "what": "договор у юристов, ждём до 12.12",
+                               "quote": "Договор на подписи у юристов"}]}
+        if "ТехноСтрой" in user:
+            return {"facts": [{"topic": "ТехноСтрой", "kind": "сделка", "what": "Ольга готовит КП до конца месяца",
+                               "who": "Ольга", "quote": "Ольга подготовит КП для «ТехноСтрой»"}]}
+        return {"facts": []}
+    return llm_answer(system, user)
+
+
+@pytest.fixture
+def am(tmp_path):
+    from pomoshnik.memory import Memory
+    d = tmp_path / "ivan"
+    d.mkdir()
+    shutil.copy(TASK / "leader_profile.md", d / "profile.md")
+    clock = FakeClock(START)
+    j, ps, mem = Journal(tmp_path / "j.sqlite", clock), ProtocolStore(tmp_path / "p.sqlite", clock), \
+        Memory(tmp_path / "m.sqlite", clock)
+    llm = StubLLM(llm_with_memory)
+    asst = Assistant(load_profile(d, org_path=TASK / "org_structure.csv"), llm, FakePult(), FakeMail(ROWS), j, ps,
+                     calendar_path=TASK / "calendar.ics", tasks_path=TASK / "tasks.csv", memory=mem)
+    yield asst, clock, llm
+    j.close()
+    ps.close()
+    mem.close()
+
+
+def test_inbox_goes_to_memory_and_leader_asks_by_topic(am):
+    asst, _, llm = am
+    asst.process_inbox()
+    asst.handle(txt("что по Облако Плюс"))
+    reply = asst.pult.sent[-1][1]
+    assert "12.12" in reply and "Сергей Морозов" in reply and "m022" in reply and "Договор на подписи у юристов" in reply
+    assert reply.count("•") == 1 and "08.12–11.12, 7 раз без изменений" in reply     # семь одинаковых статусов — одна строка
+    newsletters = {r["subject"] for r in ROWS if r["category"] == "рассылка"}
+    memory_calls = [u for s, u in llm.calls if "память помощника" in s]
+    assert memory_calls and not [u for u in memory_calls if u.split("Тема: ", 1)[1].split("\n", 1)[0] in newsletters]
+    assert any(x["kind"] == "memory_saved" for x in asst.j.actions())
+
+
+def test_memory_command_without_hits_and_without_topic(am):
+    asst, _, _ = am
+    asst.handle(txt("/chto Марс"))
+    assert "ничего нет" in asst.pult.sent[-1][1]
+    asst.handle(txt("/chto"))
+    assert "Напишите тему" in asst.pult.sent[-1][1]
+
+
+def test_approved_protocol_goes_to_memory_draft_does_not(am):
+    asst, clock, _ = am
+    pid = asst.new_meeting(TRANSCRIPT, "Планёрка", clock.now())
+    assert not asst.memory.search("ТехноСтрой")
+    asst.handle(cb(f"prot:ok:{pid}"))
+    f = asst.memory.search("ТехноСтрой")
+    assert f and f[0].source == f"протокол {pid}" and f[0].who == "Ольга"

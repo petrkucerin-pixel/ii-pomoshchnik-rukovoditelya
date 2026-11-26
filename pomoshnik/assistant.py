@@ -15,6 +15,7 @@ from pathlib import Path
 from yadro.journal import Journal
 
 from .channels.telegram import Button, Update
+from .memory import extract_facts
 from .plan import build_day_plan, load_calendar, load_tasks, render_plan
 from .profile import Profile
 from .reports import Report, review
@@ -24,6 +25,8 @@ from .triage import Decision, classify, decide
 # Сколько минут руководителя экономит одно действие помощника. Допущения для метрики «освобождённые часы».
 MINUTES_SAVED = {"авто": 3, "делегировать": 5, "в_сводку": 2, "игнорировать": 1, "спросить_руководителя": 2}
 PROTOCOL_MINUTES_SAVED = 30
+# Письма без фактов для памяти: на них не тратим вызов модели.
+MEMORY_SKIP = {"", "рассылка", "приглашение", "доступы", "календарь"}
 
 
 @dataclass
@@ -54,8 +57,9 @@ def md_to_html(md: str) -> str:
 
 class Assistant:
     def __init__(self, profile: Profile, llm, pult, mailbox, journal: Journal, protocols: ProtocolStore, *,
-                 calendar_path: str | Path, tasks_path: str | Path, outbox_mailbox=None):
+                 calendar_path: str | Path, tasks_path: str | Path, outbox_mailbox=None, memory=None):
         self.p, self.llm, self.pult, self.mail = profile, llm, pult, mailbox
+        self.memory = memory
         self.send_mail = outbox_mailbox or mailbox
         self.j, self.protocols = journal, protocols
         self.meetings = load_calendar(calendar_path)
@@ -90,13 +94,50 @@ class Assistant:
             d = decide(self.p, cat, e.from_email, summary=summ or e.subject, confidence=conf)
             self._act(e, d, eid)
             counts[d.action] = counts.get(d.action, 0) + 1
+            rec = getattr(e, "received", None) or self.clock.now()
+            if d.category not in MEMORY_SKIP:
+                self.remember(e.body, source=e.id, who=e.from_name, when=rec, title=e.subject, event_id=eid)
             if d.category in ("отчёт", "статус"):
-                rec = getattr(e, "received", None) or self.clock.now()
                 self.reports.append(Report(e.id, e.from_name, e.from_email, rec, e.subject, e.body))
         if letters:
             self._log("inbox_done", summary=json.dumps(counts, ensure_ascii=False), payload=counts)
             counts["ревизор"] = self.review_reports()
         return counts
+
+    # ---------------- память ----------------
+    def remember(self, text: str, *, source: str, who: str, when: datetime, title: str = "", event_id=None) -> int:
+        if self.memory is None:
+            return 0
+        n = self.memory.add(extract_facts(self.llm, text, source=source, who=who, when=when, title=title))
+        if n:
+            self._log("memory_saved", path="now", event_id=event_id, summary=f"{title or source}: фактов {n}",
+                      payload={"source": source, "facts": n})
+        return n
+
+    def recall(self, query: str) -> str:
+        query = query.strip().strip("?").strip()
+        if not query:
+            return "Напишите тему, например: «что по Облако Плюс»."
+        if self.memory is None:
+            return "Память помощника не подключена."
+        facts = self.memory.history(query) or self.memory.search(query)
+        if not facts:
+            return f"В памяти ничего нет по «{html.escape(query)}»."
+        groups: list[list] = []          # одинаковый статус подряд — одна строка с датами и числом повторов
+        for f in facts:
+            if groups and (groups[-1][0].who, groups[-1][0].quote.lower()) == (f.who, f.quote.lower()):
+                groups[-1].append(f)
+            else:
+                groups.append([f])
+        lines = [f"<b>Что известно: {html.escape(query)}</b>"]
+        for g in groups[-8:]:
+            f, last = g[0], g[-1]
+            when = f"{f.when:%d.%m}" if len(g) == 1 else f"{f.when:%d.%m}–{last.when:%d.%m}, {len(g)} {'раза' if 2 <= len(g) % 10 <= 4 and not 12 <= len(g) % 100 <= 14 else 'раз'} без изменений"
+            src = ", ".join(x.source for x in g)
+            lines.append(f"• {when} {html.escape(f.who)} — {html.escape(last.what)}\n"
+                         f"  <i>«{html.escape(f.quote)}»</i> ({html.escape(src)})")
+        self._log("memory_recall", actor="human", summary=f"{query}: фактов {len(facts)}")
+        return "\n".join(lines)
 
     def review_reports(self) -> int:
         """Ревизор отчётов: вопросы исполнителям — сам, руководителю — одна строка. Один вопрос по теме в сутки."""
@@ -211,6 +252,7 @@ class Assistant:
             self._log("task_assigned", path="now", summary=f"{t.owner}: {t.what} до {t.due.date().isoformat()}",
                       payload={"protocol_id": pid, "owner_id": t.owner_id, "due": t.due.isoformat()})
         rec = self.protocols.get(pid)
+        self.remember(rec["transcript"], source=f"протокол {pid}", who=self.p.name, when=p.meeting_end, title=p.title)
         self._log("protocol_sent", actor="human", path="decision",
                   summary=f"{p.title}: разослано {len(to)}, задач {len(p.tasks)}",
                   payload={"protocol_id": pid, "minutes_to_approved": rec["minutes_to_approved"],
@@ -252,6 +294,10 @@ class Assistant:
             self._send_protocol(pid, p)
             return
         cmd = re.split(r"\s+", text)[0].lower()
+        m = re.match(r"(?:/chto|что\s+по|что\s+с|что\s+известно\s+(?:о|об|про|по))(?:\s+|$)(.*)", text, re.I | re.S)
+        if m:
+            self.pult.send_text(self.recall(m.group(1)))
+            return
         if cmd in ("/plan", "план"):
             self.morning_plan(self.today())
         elif cmd in ("/pochta", "почта"):
@@ -262,4 +308,4 @@ class Assistant:
             self.pult.send_text("Вопросы по прошлому протоколу:\n" + "\n".join(f"• {html.escape(x)}" for x in q)
                                 if q else "Утверждённых протоколов пока нет.")
         elif cmd == "/start":
-            self.pult.send_text("Я ИИ-помощник руководителя. Команды: /plan, /pochta, /voprosy.")
+            self.pult.send_text("Я ИИ-помощник руководителя. Команды: /plan, /pochta, /voprosy, «что по …» (/chto).")

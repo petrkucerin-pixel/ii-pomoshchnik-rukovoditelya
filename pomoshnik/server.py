@@ -27,6 +27,7 @@ from .channels.telegram import TelegramError, TelegramPult, TelegramRateLimit
 from .llm import from_env, load_dotenv
 from .metrics import compute_metrics
 from .profile import load_profile
+from .memory import Memory
 from .protocol import ProtocolStore
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -105,6 +106,7 @@ class Stand:
         pdir = ROOT / "profiles" / self.profile_id
         self.journal = Journal(RUNTIME / f"{self.profile_id}.sqlite", self.clock)
         self.protocols = ProtocolStore(RUNTIME / f"{self.profile_id}_protocols.sqlite", self.clock)
+        self.memory = Memory(RUNTIME / f"{self.profile_id}_memory.sqlite", self.clock)
         self.llm = from_env(on_usage=lambda u: self.journal.log_llm_call(
             "openai-compatible", u.model, u.input_tokens, u.output_tokens, u.cost_usd, u.duration_ms))
         self.profile = load_profile(pdir, org_path=TASK / "org_structure.csv")
@@ -124,7 +126,8 @@ class Stand:
         chat = _bind_chat(token)
         pult = TelegramPult(token, chat)
         self.assistant = Assistant(self.profile, self.llm, pult, self.mail, self.journal, self.protocols,
-                                   calendar_path=TASK / "calendar.ics", tasks_path=TASK / "tasks.csv")
+                                   calendar_path=TASK / "calendar.ics", tasks_path=TASK / "tasks.csv",
+                                   memory=self.memory)
         self.status["bot"] = "работает"
         last_plan_day = None
         while True:
