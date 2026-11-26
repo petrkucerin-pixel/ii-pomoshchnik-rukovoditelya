@@ -1,0 +1,5 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q -m 'not live'"
+markers = ["live: прогон на настоящей модели или сервисе, только по явной команде"]
