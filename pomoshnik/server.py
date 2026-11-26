@@ -184,6 +184,79 @@ def post_meeting(title: str = Form(...), transcript: str = Form(...), minutes_ag
     return RedirectResponse("/", status_code=303)
 
 
+def _avatar_client():
+    from .avatar import LiveAvatar
+    key = os.environ.get("HEYGEN_LiveAvatar_API_KEY", "")
+    return LiveAvatar(key) if key else None
+
+
+@app.get("/avatar", response_class=HTMLResponse)
+def avatar_page(title: str = "Еженедельная встреча команды"):
+    from .avatar import build_context_prompt, opening_text
+    la = _avatar_client()
+    avatar_id = os.environ.get("LIVEAVATAR_AVATAR_ID", "")
+    if not la or not avatar_id:
+        return HTMLResponse("<p>Аватар не настроен: нет ключа LiveAvatar или id аватара.</p>", status_code=503)
+    status = la.avatar_status(avatar_id)
+    if status != "ACTIVE":
+        return HTMLResponse(f"<p>Аватар ещё готовится: {html.escape(status)}. Обновите страницу через минуту.</p>",
+                            status_code=503)
+    a = stand.assistant
+    questions = a.meeting_questions() if a else []
+    tasks = [f"{t.task} — {t.owner}, до {t.due.strftime('%d.%m')}" for t in (a.tasks if a else [])]
+    leader = stand.profile.name
+    leader_gen = os.environ.get("LEADER_NAME_GENITIVE", "Ивана Петрова")
+    ctx = la.create_context(f"{title} {datetime.now(TZ_EKB):%d.%m %H:%M}",
+                            build_context_prompt(leader=leader_gen, title=title, questions=questions,
+                                                 open_tasks=tasks, style=stand.profile.style),
+                            opening_text(leader_gen))
+    emb = la.create_embed(avatar_id, ctx, la.voice_id())
+    embed_id = emb.get("id") or emb.get("embed_id")
+    url = emb.get("url") or emb.get("embed_url") or ""
+    (RUNTIME / "avatar.json").write_text(json.dumps({"embed_id": embed_id, "title": title, "context_id": ctx},
+                                                    ensure_ascii=False), encoding="utf-8")
+    stand.journal.log_action("avatar_meeting_ready", summary=f"{title}: вопросов {len(questions)}",
+                             payload={"embed_id": embed_id, "questions": len(questions)})
+    e = html.escape
+    qs = "".join(f"<li>{e(q)}</li>" for q in questions) or "<li>прошлого протокола нет</li>"
+    return f"""<!doctype html><html lang=ru><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>Встреча с ИИ-помощником</title>
+<style>body{{font:15px system-ui,sans-serif;margin:0;background:#0f1a20;color:#e8eef1}} main{{max-width:1100px;margin:auto;padding:16px}}
+.frame{{position:relative;width:100%;aspect-ratio:16/9;background:#000;border-radius:12px;overflow:hidden}}
+iframe{{position:absolute;inset:0;width:100%;height:100%;border:0}}
+button{{min-height:44px;padding:0 18px;border:0;border-radius:10px;background:#2f855a;color:#fff;font:inherit;margin-top:12px}}
+a{{color:#9cd}}</style><main>
+<h1 style="font-size:18px">{e(title)} · ИИ-помощник {e(leader)}</h1>
+<div class=frame><iframe src="{e(url)}" allow="camera; microphone; autoplay; fullscreen"></iframe></div>
+<form method=post action=/avatar/finish><button>Встреча окончена — протокол на утверждение в Telegram</button></form>
+<h2 style="font-size:15px">Вопросы по прошлому протоколу</h2><ol>{qs}</ol>
+<p><a href="/">← экран помощника</a></p></main></html>"""
+
+
+@app.post("/avatar/finish")
+def avatar_finish():
+    from .avatar import end_time, latest_finished, transcript_to_text
+    la = _avatar_client()
+    state = json.loads((RUNTIME / "avatar.json").read_text(encoding="utf-8"))
+    sessions = la.sessions(embed_id=state["embed_id"])
+    s = latest_finished(sessions)
+    if not s:
+        active = la.sessions(embed_id=state["embed_id"], historic=False)
+        s = active[0] if active else None
+    if not s:
+        return HTMLResponse("<p>Сессия аватара не найдена. Подождите 10–20 секунд после завершения и нажмите ещё раз.</p>",
+                            status_code=404)
+    text = transcript_to_text(la.transcript(s.id))
+    if not text.strip():
+        return HTMLResponse("<p>Расшифровка пустая: во встрече никто не говорил.</p>", status_code=422)
+    end = end_time(s, TZ_EKB)
+    stand.journal.log_action("avatar_meeting_done", summary=f"{state['title']}: {s.duration} с",
+                             payload={"session_id": s.id, "duration": s.duration})
+    if stand.assistant:
+        stand.assistant.new_meeting(text, state["title"], end)
+    return RedirectResponse("/", status_code=303)
+
+
 @app.get("/", response_class=HTMLResponse)
 def index():
     m = compute_metrics(stand.journal, stand.protocols)
@@ -206,7 +279,7 @@ textarea,input{{width:100%;box-sizing:border-box;font:inherit;padding:8px;border
 button{{min-height:44px;padding:0 18px;border:0;border-radius:10px;background:#245c73;color:#fff;font:inherit;margin-top:8px}}
 </style><main>
 <h1>ИИ-помощник руководителя · {e(stand.profile.name)}</h1>
-<p>Бот: {e(stand.status['bot'])}. Я — ИИ-помощник, представляюсь так в переписке и на встречах.</p>
+<p><a href="/avatar">Встреча с аватаром →</a></p><p>Бот: {e(stand.status["bot"])}. Я — ИИ-помощник, представляюсь так в переписке и на встречах.</p>
 <div class=cards>{cards}</div>
 <h2>Новая встреча → протокол на утверждение в Telegram</h2>
 <form method=post action=/meeting><input name=title placeholder="Название встречи" required>
