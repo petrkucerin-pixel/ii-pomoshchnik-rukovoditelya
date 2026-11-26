@@ -62,7 +62,7 @@ def from_db(raw: str | None, tz) -> datetime | None:
 class Journal:
     def __init__(self, path: str | Path, clock: Clock):
         self.clock = clock
-        self.conn = sqlite3.connect(str(path))
+        self.conn = sqlite3.connect(str(path), check_same_thread=False)  # стенд: веб и бот в разных потоках
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(_SCHEMA)
         self.conn.commit()

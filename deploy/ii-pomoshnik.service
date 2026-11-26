@@ -1,0 +1,15 @@
+[Unit]
+Description=ИИ-помощник руководителя (стенд хакатона)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/root/ii-pomoshnik
+ExecStart=/root/ii-pomoshnik/.venv/bin/python -m pomoshnik.server
+Environment=PORT=8080
+Environment=PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
