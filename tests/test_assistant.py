@@ -57,7 +57,9 @@ class FakeMail:
             return []
         self.given = True
         return [SimpleNamespace(id=r["id"], from_name=r["from_name"], from_email=r["from_email"], subject=r["subject"],
-                                body=r["body"]) for r in self.rows]
+                                body=r["body"],
+                                received=datetime.fromisoformat(r["received"]).replace(tzinfo=TZ_EKB))
+                for r in self.rows]
 
     def send(self, to, subject, body, in_reply_to=None):
         self.out.append({"to": to, "subject": subject, "body": body, "in_reply_to": in_reply_to})
@@ -98,7 +100,7 @@ def txt(text):
 def test_inbox_actions_and_idempotent(a):
     asst, _, mail = a
     c = asst.process_inbox()
-    assert sum(c.values()) == 80 and c["спросить_руководителя"] >= 40
+    assert sum(v for k, v in c.items() if k != "ревизор") == 80 and c["спросить_руководителя"] >= 40
     delegated = [m for m in mail.out if m["subject"].startswith("Fwd:")]
     assert delegated and all(m["to"] in ("p02@company.example", "p06@company.example") for m in delegated)
     assert any(m["subject"].startswith("Re:") for m in mail.out)            # авто: перенос встречи
@@ -165,3 +167,15 @@ def test_demo_date_moves_plan_to_task_calendar(a, monkeypatch):
     monkeypatch.setenv("DEMO_DATE", "2026-12-08")
     asst.handle(txt("/plan"))
     assert "08.12" in asst.pult.sent[-1][1] and "Встречи (0)" not in asst.pult.sent[-1][1]
+
+
+def test_reviser_runs_after_inbox_writes_people_not_leader(a, monkeypatch):
+    asst, _, mail = a
+    monkeypatch.setenv("DEMO_DATE", "2026-12-11")
+    c = asst.process_inbox()
+    questions = [m for m in mail.out if m["subject"].startswith("Вопрос по отчёту")]
+    assert c["ревизор"] >= 6 and questions
+    assert any("Облако Плюс" in m["subject"] for m in questions)
+    assert any("риск" in r.lower() or "под риском" in r for r in asst.risks)
+    assert all(m["to"] != "p01@company.example" for m in questions)
+    assert asst.review_reports() == 0                 # повторно в тот же день не спрашивает

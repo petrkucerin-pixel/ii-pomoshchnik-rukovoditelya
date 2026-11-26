@@ -17,6 +17,7 @@ from yadro.journal import Journal
 from .channels.telegram import Button, Update
 from .plan import build_day_plan, load_calendar, load_tasks, render_plan
 from .profile import Profile
+from .reports import Report, review
 from .protocol import ProtocolStore, build_protocol, questions_from_previous, render_markdown
 from .triage import Decision, classify, decide
 
@@ -62,6 +63,8 @@ class Assistant:
         self.pending: Pending | None = None
         self.decisions: list[dict] = []      # письма, которые ждут руководителя
         self.digest: list[str] = []
+        self.risks: list[str] = []           # риски для целей руководителя от ревизора
+        self.reports: list[Report] = []      # отчёты и статусы команды для ревизора
 
     @property
     def clock(self):
@@ -87,9 +90,35 @@ class Assistant:
             d = decide(self.p, cat, e.from_email, summary=summ or e.subject, confidence=conf)
             self._act(e, d, eid)
             counts[d.action] = counts.get(d.action, 0) + 1
+            if d.category in ("отчёт", "статус"):
+                rec = getattr(e, "received", None) or self.clock.now()
+                self.reports.append(Report(e.id, e.from_name, e.from_email, rec, e.subject, e.body))
         if letters:
             self._log("inbox_done", summary=json.dumps(counts, ensure_ascii=False), payload=counts)
+            counts["ревизор"] = self.review_reports()
         return counts
+
+    def review_reports(self) -> int:
+        """Ревизор отчётов: вопросы исполнителям — сам, руководителю — одна строка. Один вопрос по теме в сутки."""
+        today = self.today()
+        done = {(a["payload"].get("kind"), a["payload"].get("topic"), a["payload"].get("day"))
+                for a in self.j.actions() if a["kind"] == "report_review"}
+        n = 0
+        for f in review(self.reports, self.tasks, self.p.org, self.p.goals, today):
+            key = (f.kind, f.topic, today.isoformat())
+            if key in done:
+                continue
+            if f.to_email:
+                self.send_mail.send(f.to_email, f"Вопрос по отчёту: {f.topic}",
+                                    f.question + "\n\n— ИИ-помощник Ивана Петрова")
+            if f.leader:
+                self.risks.append(f.leader)
+            self.digest.append(f.digest)
+            self._log("report_review", path="now", summary=f.digest,
+                      payload={"kind": f.kind, "topic": f.topic, "day": today.isoformat(), "to": f.to_email,
+                               "sources": list(f.sources), "minutes_saved": 5 if f.to_email else 2})
+            n += 1
+        return n
 
     def _act(self, e, d: Decision, eid: int):
         path = "decision" if d.action == "спросить_руководителя" else "now"
@@ -113,7 +142,8 @@ class Assistant:
 
     # ---------------- план дня ----------------
     def morning_plan(self, day: date) -> int:
-        items = [f"{x['from']}: {x['subject']} — {x['reason']}" for x in self.decisions[:10]]
+        items = [f"⚠️ {r}" for r in self.risks[-3:]]
+        items += [f"{x['from']}: {x['subject']} — {x['reason']}" for x in self.decisions[:10]]
         if len(self.decisions) > 10:
             items.append(f"…и ещё {len(self.decisions) - 10}")
         plan = build_day_plan(day, self.meetings, self.tasks, decisions=items, digest=self.digest[-8:])
