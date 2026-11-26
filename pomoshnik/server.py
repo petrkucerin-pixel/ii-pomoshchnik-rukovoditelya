@@ -143,7 +143,7 @@ class Stand:
                 now = datetime.now(TZ_EKB)
                 if now.strftime("%H:%M") >= self.profile.plan_time and last_plan_day != now.date() and now.weekday() < 5:
                     last_plan_day = now.date()
-                    self.assistant.morning_plan(now.date())
+                    self.assistant.morning_plan(self.assistant.today())
             except TelegramRateLimit as e:
                 time.sleep(max(e.retry_after, 1))
             except TelegramError as e:

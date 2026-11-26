@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import html
+import os
 import json
 import re
 from dataclasses import dataclass
@@ -65,6 +66,11 @@ class Assistant:
     @property
     def clock(self):
         return self.j.clock
+
+    def today(self) -> date:
+        """Рабочий день помощника. DEMO_DATE в .env сдвигает его на даты учебного календаря заказчика."""
+        demo = os.environ.get("DEMO_DATE")
+        return date.fromisoformat(demo) if demo else self.clock.now().date()
 
     def _log(self, kind: str, *, actor="assistant", path=None, summary="", payload=None, event_id=None):
         self.j.log_action(kind, actor=actor, path=path, summary=summary, payload=payload or {}, event_id=event_id)
@@ -217,7 +223,7 @@ class Assistant:
             return
         cmd = re.split(r"\s+", text)[0].lower()
         if cmd in ("/plan", "план"):
-            self.morning_plan(self.clock.now().date())
+            self.morning_plan(self.today())
         elif cmd in ("/pochta", "почта"):
             c = self.process_inbox()
             self.pult.send_text("Почта разобрана: " + (", ".join(f"{k} {v}" for k, v in c.items()) or "новых писем нет"))

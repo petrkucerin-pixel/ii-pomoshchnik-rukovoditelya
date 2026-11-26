@@ -158,3 +158,10 @@ def test_questions_from_last_approved(a):
     asst.handle(cb(f"prot:ok:{pid}"))
     asst.handle(txt("/voprosy"))
     assert "Подписать договор" in asst.pult.sent[-1][1] and "Бюджет не решён" in asst.pult.sent[-1][1]
+
+
+def test_demo_date_moves_plan_to_task_calendar(a, monkeypatch):
+    asst, _, _ = a
+    monkeypatch.setenv("DEMO_DATE", "2026-12-08")
+    asst.handle(txt("/plan"))
+    assert "08.12" in asst.pult.sent[-1][1] and "Встречи (0)" not in asst.pult.sent[-1][1]
