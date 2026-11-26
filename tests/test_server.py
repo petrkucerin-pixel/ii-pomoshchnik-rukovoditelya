@@ -14,6 +14,7 @@ def client(tmp_path, monkeypatch):
         yield c
     srv.stand.journal.close()
     srv.stand.protocols.close()
+    srv.stand.memory.close()
 
 
 def test_health_without_bot_token(client):

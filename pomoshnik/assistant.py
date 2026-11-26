@@ -15,7 +15,7 @@ from pathlib import Path
 from yadro.journal import Journal
 
 from .channels.telegram import Button, Update
-from .memory import extract_facts
+from .memory import brief, collapse, extract_facts, period
 from .plan import build_day_plan, load_calendar, load_tasks, render_plan
 from .profile import Profile
 from .reports import Report, review
@@ -123,21 +123,30 @@ class Assistant:
         facts = self.memory.history(query) or self.memory.search(query)
         if not facts:
             return f"В памяти ничего нет по «{html.escape(query)}»."
-        groups: list[list] = []          # одинаковый статус подряд — одна строка с датами и числом повторов
-        for f in facts:
-            if groups and (groups[-1][0].who, groups[-1][0].quote.lower()) == (f.who, f.quote.lower()):
-                groups[-1].append(f)
-            else:
-                groups.append([f])
         lines = [f"<b>Что известно: {html.escape(query)}</b>"]
-        for g in groups[-8:]:
+        for g in collapse(facts)[-8:]:      # одинаковый статус подряд — одна строка с датами и числом повторов
             f, last = g[0], g[-1]
-            when = f"{f.when:%d.%m}" if len(g) == 1 else f"{f.when:%d.%m}–{last.when:%d.%m}, {len(g)} {'раза' if 2 <= len(g) % 10 <= 4 and not 12 <= len(g) % 100 <= 14 else 'раз'} без изменений"
             src = ", ".join(x.source for x in g)
-            lines.append(f"• {when} {html.escape(f.who)} — {html.escape(last.what)}\n"
+            lines.append(f"• {period(g)} {html.escape(f.who)} — {html.escape(last.what)}\n"
                          f"  <i>«{html.escape(f.quote)}»</i> ({html.escape(src)})")
         self._log("memory_recall", actor="human", summary=f"{query}: фактов {len(facts)}")
         return "\n".join(lines)
+
+    def meeting_brief(self, days: int = 7) -> tuple[str, list[str]]:
+        """Для аватара: вся история из памяти и открытые вопросы ревизора за последние `days` дней.
+
+        Берётся из баз, а не из памяти процесса, поэтому переживает перезапуск стенда."""
+        history = brief(self.memory) if self.memory is not None else ""
+        today = self.today()
+        latest: dict[tuple, str] = {}
+        for a in self.j.actions():
+            pl = a["payload"] or {}
+            if a["kind"] != "report_review" or not pl.get("to") or not pl.get("question"):
+                continue
+            age = (today - date.fromisoformat(pl["day"])).days
+            if 0 <= age <= days:
+                latest[(pl.get("kind"), pl.get("topic"))] = f"{pl.get('to_name')} — {pl.get('topic')}: {pl['question']}"
+        return history, list(latest.values())
 
     def review_reports(self) -> int:
         """Ревизор отчётов: вопросы исполнителям — сам, руководителю — одна строка. Один вопрос по теме в сутки."""
@@ -157,6 +166,7 @@ class Assistant:
             self.digest.append(f.digest)
             self._log("report_review", path="now", summary=f.digest,
                       payload={"kind": f.kind, "topic": f.topic, "day": today.isoformat(), "to": f.to_email,
+                               "to_name": f.to_name, "question": f.question,
                                "sources": list(f.sources), "minutes_saved": 5 if f.to_email else 2})
             n += 1
         return n

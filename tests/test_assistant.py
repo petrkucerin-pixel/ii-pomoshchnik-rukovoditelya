@@ -240,3 +240,23 @@ def test_approved_protocol_goes_to_memory_draft_does_not(am):
     asst.handle(cb(f"prot:ok:{pid}"))
     f = asst.memory.search("ТехноСтрой")
     assert f and f[0].source == f"протокол {pid}" and f[0].who == "Ольга"
+
+
+def test_meeting_brief_has_history_and_revisor_questions_and_survives_restart(am, monkeypatch, tmp_path):
+    asst, clock, llm = am
+    monkeypatch.setenv("DEMO_DATE", "2026-12-11")
+    asst.process_inbox()
+    history, questions = asst.meeting_brief()
+    assert "Облако Плюс" in history and "12.12" in history and "m022" in history
+    assert any("Облако Плюс" in q and q.startswith("Сергей Морозов") for q in questions)
+    again = Assistant(asst.p, llm, FakePult(), FakeMail([]), asst.j, asst.protocols,          # перезапуск стенда
+                      calendar_path=TASK / "calendar.ics", tasks_path=TASK / "tasks.csv", memory=asst.memory)
+    assert again.meeting_brief() == (history, questions)
+
+
+def test_meeting_brief_old_revisor_questions_drop_off(am, monkeypatch):
+    asst, clock, _ = am
+    monkeypatch.setenv("DEMO_DATE", "2026-12-11")
+    asst.process_inbox()
+    monkeypatch.setenv("DEMO_DATE", "2026-12-25")
+    assert asst.meeting_brief()[1] == []

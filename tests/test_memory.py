@@ -95,3 +95,50 @@ def test_memory_survives_restart(tmp_path):
     m = Memory(tmp_path / "m.sqlite", FakeClock(T2))
     assert m.history("Облако Плюс")[0].when == T1
     m.close()
+
+
+# ---------------- вся история для аватара ----------------
+def _fact(topic, what, quote, when, source, who="Сергей Морозов"):
+    from pomoshnik.memory import Fact
+    return Fact(topic=topic, kind="партнёр", what=what, who=who, when=when, source=source, quote=quote)
+
+
+def test_brief_has_every_topic_newest_first_and_collapses_repeats(mem):
+    from datetime import timedelta
+    from pomoshnik.memory import brief
+    for i in range(7):
+        mem.add([_fact("Облако Плюс", "договор у юристов, ждём до 12.12", "Договор на подписи у юристов",
+                       T1 + timedelta(hours=i * 10), f"m{i}")])
+    mem.add([_fact("ТехноСтрой", "КП до конца месяца", "Ольга подготовит КП", T1 - timedelta(days=3), "протокол 1", "Ольга")])
+    text = brief(mem)
+    assert text.index("ТехноСтрой") > text.index("Облако Плюс")            # свежая тема выше
+    assert text.count("Договор на подписи у юристов") == 1 and "7 раз без изменений" in text
+    assert "протокол 1" in text and "Ольга" in text and "05.12" in text
+
+
+def test_brief_cuts_old_topics_and_says_so(mem):
+    from datetime import timedelta
+    from pomoshnik.memory import brief
+    for i in range(40):
+        mem.add([_fact(f"Сделка {i}", f"статус {i}", f"статус сделки номер {i}", T1 + timedelta(hours=i), f"m{i}")])
+    text = brief(mem, max_chars=1500)
+    assert len(text) <= 1500 and "Сделка 39" in text and "Сделка 0 " not in text and "ещё" in text
+
+
+def test_brief_empty_memory(mem):
+    from pomoshnik.memory import brief
+    assert brief(mem) == ""
+
+
+def test_repeat_with_other_punctuation_is_still_one_line(mem):
+    from datetime import timedelta
+    from pomoshnik.memory import brief
+    mem.add([_fact("Облако Плюс", "ждём до 12.12", "Договор на подписи у юристов, ждём до 12.12.", T1, "m1")])
+    mem.add([_fact("Облако Плюс", "ждём до 12.12", "Договор на подписи у юристов, ждём до 12.12", T1 + timedelta(hours=5), "m2")])
+    assert "2 раза без изменений" in brief(mem)
+
+
+def test_topic_quotes_removed_whole_not_half():
+    raw = dict(GOOD, topic="Маржа по «Ромашка-Ритейл»", quote="Договор на подписи у юристов")
+    f = extract_facts(facts_answer(raw), LETTER, source="m022", who="Сергей Морозов", when=T1)[0]
+    assert f.topic == "Маржа по Ромашка-Ритейл"

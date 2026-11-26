@@ -72,3 +72,16 @@ def test_latest_finished_session():
          Session("c", "", "2026-11-27T11:00:00", 90, "EMBED")]
     assert latest_finished(s).id == "c"
     assert latest_finished([Session("x", "", None, 0, "EMBED")]) is None
+
+
+def test_context_prompt_carries_history_and_history_questions():
+    p = build_context_prompt(leader="Ивана Петрова", title="Планёрка", questions=[], open_tasks=[], style="",
+                             history="Облако Плюс\n- 08.12–11.12 Сергей Морозов — ждём до 12.12 (m022)",
+                             history_questions=["Сергею Морозову: статус по «Облако Плюс» не меняется с 08.12"])
+    assert "ждём до 12.12 (m022)" in p and "не меняется с 08.12" in p
+    assert "не придумывай" in p.lower() and "истори" in p.lower()
+
+
+def test_context_prompt_without_history_says_so():
+    p = build_context_prompt(leader="Ивана Петрова", title="Планёрка", questions=[], open_tasks=[], style="")
+    assert "истории пока нет" in p.lower()

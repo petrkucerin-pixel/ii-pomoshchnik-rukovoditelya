@@ -27,7 +27,7 @@ from .channels.telegram import TelegramError, TelegramPult, TelegramRateLimit
 from .llm import from_env, load_dotenv
 from .metrics import compute_metrics
 from .profile import load_profile
-from .memory import Memory
+from .memory import Memory, brief
 from .protocol import ProtocolStore
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -206,20 +206,24 @@ def avatar_page(title: str = "Еженедельная встреча коман
                             status_code=503)
     a = stand.assistant
     questions = a.meeting_questions() if a else []
+    history, history_questions = a.meeting_brief() if a else (brief(stand.memory), [])
     tasks = [f"{t.task} — {t.owner}, до {t.due.strftime('%d.%m')}" for t in (a.tasks if a else [])]
     leader = stand.profile.name
     leader_gen = os.environ.get("LEADER_NAME_GENITIVE", "Ивана Петрова")
     ctx = la.create_context(f"{title} {datetime.now(TZ_EKB):%d.%m %H:%M}",
                             build_context_prompt(leader=leader_gen, title=title, questions=questions,
-                                                 open_tasks=tasks, style=stand.profile.style),
+                                                 open_tasks=tasks, style=stand.profile.style,
+                                                 history=history, history_questions=history_questions),
                             opening_text(leader_gen))
     emb = la.create_embed(avatar_id, ctx, la.voice_id())
     embed_id = emb.get("id") or emb.get("embed_id")
     url = emb.get("url") or emb.get("embed_url") or ""
     (RUNTIME / "avatar.json").write_text(json.dumps({"embed_id": embed_id, "title": title, "context_id": ctx},
                                                     ensure_ascii=False), encoding="utf-8")
-    stand.journal.log_action("avatar_meeting_ready", summary=f"{title}: вопросов {len(questions)}",
-                             payload={"embed_id": embed_id, "questions": len(questions)})
+    stand.journal.log_action("avatar_meeting_ready",
+                             summary=f"{title}: вопросов {len(questions)}, из истории {len(history_questions)}",
+                             payload={"embed_id": embed_id, "questions": len(questions),
+                                      "history_questions": len(history_questions), "history_chars": len(history)})
     e = html.escape
     qs = "".join(f"<li>{e(q)}</li>" for q in questions) or "<li>прошлого протокола нет</li>"
     return f"""<!doctype html><html lang=ru><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">

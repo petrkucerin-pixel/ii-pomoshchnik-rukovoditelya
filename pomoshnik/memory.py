@@ -24,7 +24,7 @@ SYSTEM = """Ты ведёшь память помощника руководит
 Не придумывай фактов, которых нет в тексте. Нет полезных фактов — верни {"facts": []}."""
 
 _WORD = re.compile(r"\w+")
-_QUOTES = "«»\"'„“”"
+_NO_QUOTES = str.maketrans("", "", "«»\"„“”")   # кавычки в названии темы убираем все, а не только по краям
 
 
 @dataclass(frozen=True)
@@ -55,7 +55,7 @@ def extract_facts(llm, text: str, *, source: str, who: str, when: datetime, titl
     for f in raw:
         if not isinstance(f, dict):
             continue
-        topic = str(f.get("topic") or "").strip().strip(_QUOTES).strip()
+        topic = " ".join(str(f.get("topic") or "").translate(_NO_QUOTES).split())
         quote = str(f.get("quote") or "").strip()
         if not topic or not check_quote(quote, text, min_words=3).found:
             continue
@@ -126,3 +126,58 @@ class Memory:
             if hits:
                 return hits
         return []
+
+    def all(self) -> list[Fact]:
+        return self._rows("1 = 1", (), 1_000_000)
+
+
+def collapse(facts: list[Fact]) -> list[list[Fact]]:
+    """Один и тот же статус от того же человека подряд — одна группа: «7 раз без изменений»."""
+    groups: list[list[Fact]] = []
+    for f in facts:
+        if groups and (groups[-1][0].who, topic_key(groups[-1][0].quote)) == (f.who, topic_key(f.quote)):
+            groups[-1].append(f)
+        else:
+            groups.append([f])
+    return groups
+
+
+def times(n: int) -> str:
+    return "раза" if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14 else "раз"
+
+
+def period(g: list[Fact]) -> str:
+    f, last = g[0], g[-1]
+    if len(g) == 1:
+        return f"{f.when:%d.%m}"
+    return f"{f.when:%d.%m}–{last.when:%d.%m}, {len(g)} {times(len(g))} без изменений"
+
+
+def group_line(g: list[Fact]) -> str:
+    f, last = g[0], g[-1]
+    src = f.source if len(g) == 1 else f"{f.source} и ещё {len(g) - 1}"
+    return f"{period(g)} {f.who} — {last.what}: «{f.quote}» ({src})"
+
+
+def _cut_note(n: int) -> str:
+    return f"…и ещё {n} тем постарше, подробности — в памяти помощника."
+
+
+def brief(mem: Memory, max_chars: int = 20000) -> str:
+    """Вся накопленная история по темам для контекста аватара. Свежие темы выше; не влезло — старые темы отрезаются."""
+    topics: dict[str, list[Fact]] = {}
+    for f in mem.all():
+        topics.setdefault(topic_key(f.topic), []).append(f)
+    order = sorted(topics.values(), key=lambda fs: fs[-1].when, reverse=True)
+    blocks = ["\n".join([f"{fs[-1].topic} ({fs[-1].kind})"] + [f"- {group_line(g)}" for g in collapse(fs)])
+              for fs in order]
+    out, used = [], 0
+    for i, b in enumerate(blocks):
+        rest = len(blocks) - i - 1
+        reserve = len(_cut_note(rest)) + 2 if rest else 0
+        if used + len(b) + reserve > max_chars:
+            out.append(_cut_note(len(blocks) - i))
+            break
+        out.append(b)
+        used += len(b) + 2
+    return "\n\n".join(out)
