@@ -122,7 +122,7 @@ class FakeLiveAvatar:
     def voice_id(self):
         return "voice-1"
 
-    def create_embed(self, avatar_id, context_id, voice_id):
+    def create_embed(self, avatar_id, context_id, voice_id, **kw):
         return {"embed_id": "emb-1", "url": self.URL}
 
 
@@ -137,3 +137,18 @@ def test_avatar_page_opens_avatar_in_own_window_on_http(client, monkeypatch, tmp
     assert "Встреча окончена" in page
     state = (tmp_path / "avatar.json").read_text(encoding="utf-8")
     assert "emb-1" in state and "ev001@company.example" in state
+
+
+# ---------------- TASK_09: студия и экран аватара ----------------
+def test_studio_api_idle_and_page(client):
+    st = client.get("/api/studio").json()
+    assert st["state"] in ("idle", "ready", "done") and "upcoming" in st and "open_now" in st
+    page = client.get("/studio").text
+    assert "/api/studio" in page and "window.open" in page and "Chat now" in page and "innerHTML" not in page
+
+
+def test_avatar_screen_shows_meeting(client, monkeypatch):
+    monkeypatch.setenv("DEMO_DATE", "2026-12-07")
+    page = client.get("/avatar/screen", params={"uid": "ev001@company.example"}).text
+    assert "Планёрка направления" in page and "Вопросы из истории" in page and "Задачи участников" in page
+    assert client.get("/avatar/screen", params={"uid": "nope"}).status_code == 404

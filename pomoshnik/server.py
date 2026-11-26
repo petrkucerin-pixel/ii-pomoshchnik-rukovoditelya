@@ -33,6 +33,7 @@ from .metrics import compute_metrics
 from .profile import load_profile
 from .memory import Memory, collapse, period, topics
 from .protocol import ProtocolStore, questions_from_previous
+from .studio import Autopilot, prepare_avatar
 from .templates import TemplateError, discuss as discuss_template, to_dict as template_dict
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -149,11 +150,35 @@ class Stand:
         self.pult = DeferredPult()
         self.lock = threading.RLock()        # бот и кабинет работают с одним помощником
         self.assistant: Assistant = self._new_assistant()
-        self.status = {"bot": "не запущен", "last_poll": None, "error": ""}
+        self.status = {"bot": "не запущен", "last_poll": None, "error": "", "autopilot": "не запущен"}
+        self.autopilot = Autopilot(lambda: self.assistant, _avatar_client,
+                                   avatar_id=os.environ.get("LIVEAVATAR_AVATAR_ID", ""),
+                                   base_url=os.environ.get("STAND_URL", "http://95.140.147.248:8080"),
+                                   categories={c.strip() for c in os.environ.get("AVATAR_CATEGORIES", "операционная").split(",")
+                                               if c.strip()})
 
     def _new_assistant(self) -> Assistant:
         return Assistant(self.profile, self.llm, self.pult, self.mail, self.journal, self.protocols,
                          calendar_path=TASK / "calendar.ics", tasks_path=TASK / "tasks.csv", memory=self.memory)
+
+    def start_autopilot(self):
+        """Аватар сам по календарю (TASK_09): шаг раз в 20 секунд, если настроен LiveAvatar."""
+        avatar_id = os.environ.get("LIVEAVATAR_AVATAR_ID", "")
+        if not (avatar_id and os.environ.get("HEYGEN_LiveAvatar_API_KEY")):
+            self.status["autopilot"] = "LiveAvatar не настроен"
+            return
+        self.status["autopilot"] = "работает"
+        threading.Thread(target=self._autopilot_loop, daemon=True).start()
+
+    def _autopilot_loop(self):
+        while True:
+            try:
+                with self.lock:
+                    self.autopilot.tick()
+            except Exception as e:          # шаг автопилота не должен ронять стенд
+                log.exception("автопилот аватара")
+                self.status["autopilot"] = f"ошибка: {type(e).__name__}"
+            time.sleep(20)
 
     def restart_assistant(self):
         """Как после перезапуска стенда: всё, что не в базах, теряется."""
@@ -214,6 +239,7 @@ async def _lifespan(_app):
     global stand
     stand = Stand()
     stand.start_bot()
+    stand.start_autopilot()
     yield
 
 
@@ -247,7 +273,6 @@ def _avatar_client():
 
 @app.get("/avatar", response_class=HTMLResponse)
 def avatar_page(title: str = "Еженедельная встреча команды", uid: str | None = None):
-    from .avatar import build_context_prompt, opening_text
     la = _avatar_client()
     avatar_id = os.environ.get("LIVEAVATAR_AVATAR_ID", "")
     if not la or not avatar_id:
@@ -256,27 +281,17 @@ def avatar_page(title: str = "Еженедельная встреча коман
     if status != "ACTIVE":
         return HTMLResponse(f"<p>Аватар ещё готовится: {html.escape(status)}. Обновите страницу через минуту.</p>",
                             status_code=503)
-    a = stand.assistant
-    questions = _protocol_questions()
-    history, history_questions = meeting_brief(stand.journal, stand.memory, work_day(stand.clock))
-    tasks = [f"{t.task} — {t.owner}, до {t.due.strftime('%d.%m')}" for t in a.tasks]
+    with stand.lock:
+        r = prepare_avatar(stand.assistant, la, avatar_id, title, uid)
     leader = stand.profile.name
-    leader_gen = os.environ.get("LEADER_NAME_GENITIVE", "Ивана Петрова")
-    ctx = la.create_context(f"{title} {datetime.now(TZ_EKB):%d.%m %H:%M}",
-                            build_context_prompt(leader=leader_gen, title=title, questions=questions,
-                                                 open_tasks=tasks, style=stand.profile.style,
-                                                 history=history, history_questions=history_questions),
-                            opening_text(leader_gen))
-    emb = la.create_embed(avatar_id, ctx, la.voice_id())
-    embed_id = emb.get("id") or emb.get("embed_id")
-    url = emb.get("url") or emb.get("embed_url") or ""
-    (RUNTIME / "avatar.json").write_text(json.dumps({"embed_id": embed_id, "title": title, "context_id": ctx,
+    embed_id, url, questions, history_questions = r["embed_id"], r["url"], r["questions"], r["history_questions"]
+    (RUNTIME / "avatar.json").write_text(json.dumps({"embed_id": embed_id, "title": title, "context_id": r["context_id"],
                                                      "meeting_uid": uid},
                                                     ensure_ascii=False), encoding="utf-8")
     stand.journal.log_action("avatar_meeting_ready",
                              summary=f"{title}: вопросов {len(questions)}, из истории {len(history_questions)}",
                              payload={"embed_id": embed_id, "questions": len(questions),
-                                      "history_questions": len(history_questions), "history_chars": len(history)})
+                                      "history_questions": len(history_questions), "history_chars": r["history_chars"]})
     e = html.escape
     qs = "".join(f"<li>{e(q)}</li>" for q in questions) or "<li>Утверждённого прошлого протокола нет.</li>"
     hqs = "".join(f"<li>{e(q)}</li>" for q in history_questions) or "<li>Открытых вопросов нет.</li>"
@@ -338,6 +353,105 @@ def avatar_finish():
     with stand.lock:
         stand.assistant.new_meeting(text, state["title"], end, meeting_uid=state.get("meeting_uid"))
     return RedirectResponse("/#meetings", status_code=303)
+
+
+# ---------------- студия и экран аватара (TASK_09) ----------------
+@app.get("/api/studio")
+def api_studio():
+    with stand.lock:
+        return stand.autopilot.state() | {"autopilot": stand.status.get("autopilot")}
+
+
+_HEAD = """<!doctype html><html lang=ru><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<link rel="icon" href="/static/theme/img/logo.svg"><link rel="stylesheet" href="/static/theme/theme.css">"""
+
+
+@app.get("/studio", response_class=HTMLResponse)
+def studio_page():
+    return _HEAD + """<title>Студия аватара</title>
+<div class="t-page">
+<div class="t-kicker">Студия · компьютер, через который аватар выходит в Телемост</div>
+<h1 style="font-size:clamp(26px,4vw,44px);margin:6px 0 16px">Аватар на встречах</h1>
+<div class="t-grid">
+<section class="t-card t-span-7"><header><h2 id="st-title">Ждём встречу</h2><span class="t-chip" id="st-chip">ожидание</span></header>
+<p id="st-text" class="t-muted">Страница сама откроет аватара за минуту до встречи и закроет после неё.</p>
+<div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:12px">
+<button class="t-btn t-btn--coral" id="st-open" hidden>Открыть аватара</button>
+<a class="t-btn t-btn--ghost" id="st-screen" target="avatar-screen" hidden>Экран аватара</a></div>
+<p class="t-error" id="st-warn" hidden>Браузер не дал открыть окно. Разрешите всплывающие окна для этого сайта и нажмите «Открыть аватара».</p>
+</section>
+<section class="t-card t-span-5"><header><h2>Сегодня</h2><span class="t-note" id="st-cats"></span></header><ul class="t-timeline" id="st-list"></ul></section>
+<section class="t-card t-span-12"><header><h2>Как это работает в Телемосте</h2></header><ol class="t-steps">
+<li><span class="t-num">01</span><span class="t-row-title">Разрешите всплывающие окна для стенда — один раз</span><span></span></li>
+<li><span class="t-num">02</span><span class="t-row-title">В окне аватара выберите Russian и нажмите «Chat now» — так требует LiveAvatar</span><span></span></li>
+<li><span class="t-num">03</span><span class="t-row-title">OBS захватывает окно аватара → виртуальная камера в Телемосте, звук через VB-Cable</span><span></span>
+<span class="t-row-sub">Подробно — ТЕЛЕМОСТ.md. Видео аватара можно свернуть в «картинку в картинке» кнопкой браузера.</span></li>
+<li><span class="t-num">04</span><span class="t-row-title">«Экран аватара» показывайте в Телемосте демонстрацией экрана; руководитель показывает свой экран сам</span><span></span></li>
+<li><span class="t-num">05</span><span class="t-row-title">После встречи окно закроется само, протокол уйдёт руководителю в Telegram</span><span></span></li>
+</ol></section>
+</div></div>
+<script>
+let win = null, openedUrl = "";
+const $ = id => document.getElementById(id);
+function openAvatar(url) {
+  win = window.open(url, "avatar", "width=640,height=400");
+  openedUrl = url;
+  $("st-warn").hidden = !!win;
+}
+$("st-open").addEventListener("click", () => openAvatar($("st-open").dataset.url));
+async function poll() {
+  try {
+    const s = await (await fetch("/api/studio", {cache: "no-store"})).json();
+    $("st-cats").textContent = "категории: " + s.categories.join(", ");
+    const list = $("st-list");
+    list.replaceChildren(...s.upcoming.map(m => {
+      const li = document.createElement("li"), t = document.createElement("span"), n = document.createElement("span");
+      t.className = "t-time"; t.textContent = m.start.slice(11, 16); n.textContent = m.title;
+      li.append(t, n); return li;
+    }));
+    if (!s.upcoming.length) { const li = document.createElement("li"); li.style.display = "block"; li.textContent = "Встреч для аватара сегодня больше нет."; list.append(li); }
+    const m = s.meeting;
+    $("st-title").textContent = m ? m.title + " · " + m.start.slice(11, 16) + "–" + m.end.slice(11, 16) : "Ждём встречу";
+    $("st-chip").textContent = {ready: s.open_now ? "аватар на встрече" : "аватар готов", done: "встреча закончилась", idle: "ожидание"}[s.state];
+    $("st-text").textContent = s.state === "done" ? "Протокол собирается сам и уходит руководителю в Telegram." :
+      s.state === "ready" ? "Аватар знает историю, вопросы ревизора и задачи участников." :
+      "Страница сама откроет аватара за минуту до встречи и закроет после неё.";
+    $("st-open").hidden = s.state !== "ready";
+    $("st-open").dataset.url = s.url || "";
+    $("st-screen").hidden = !s.screen_url;
+    if (s.screen_url) $("st-screen").href = s.screen_url;
+    if (s.open_now && s.url && s.url !== openedUrl) openAvatar(s.url);
+    if (!s.open_now && win && !win.closed) { win.close(); win = null; openedUrl = ""; }
+  } catch (e) { $("st-text").textContent = "Нет связи со стендом, повторяю…"; }
+}
+poll(); setInterval(poll, 10000);
+</script></html>"""
+
+
+@app.get("/avatar/screen", response_class=HTMLResponse)
+def avatar_screen(uid: str):
+    with stand.lock:
+        card = cabinet.meeting(stand.assistant, uid)
+    if card is None:
+        raise HTTPException(404, "нет такой встречи")
+    e = html.escape
+    m = card["meeting"]
+    li = lambda items, empty: "".join(f"<li>{e(x)}</li>" for x in items) or f"<li class=t-muted>{empty}</li>"
+    tasks = [f"{t['task']} — {t['owner']}, до {t['due'][8:10]}.{t['due'][5:7]}" for t in card["tasks"]]
+    people = ", ".join(a["name"] for a in m["attendees"])
+    return _HEAD + f"""<title>Экран аватара · {e(m['title'])}</title><meta http-equiv="refresh" content="30">
+<style>.screen{{aspect-ratio:16/9;max-width:1280px;margin:0 auto}} .screen ol{{margin:4px 0 0;padding-left:1.2em}} .screen li{{margin:6px 0}}</style>
+<div class="t-page screen">
+<section class="t-hero" style="min-height:0;padding:28px 36px">
+<div class="t-hero-text"><div class="t-kicker">ИИ-помощник {e(stand.profile.name)} · {e(m['start'][11:16])}–{e(m['end'][11:16])}</div>
+<h1 style="margin-top:8px;font-size:clamp(28px,4vw,48px)">{e(m['title'])}</h1><div class="t-rule"></div>
+<div class="t-kicker">Участники: {e(people)}</div></div>
+<img class="t-hero-art" src="/static/theme/img/chat.svg" alt="" style="width:min(22%,200px)"></section>
+<div class="t-grid" style="margin-top:16px">
+<section class="t-card t-span-4"><header><h2>Вопросы по прошлому протоколу</h2></header><ol>{li(card['previous_questions'], 'Утверждённого прошлого протокола нет.')}</ol></section>
+<section class="t-card t-span-4"><header><h2>Вопросы из истории</h2></header><ol>{li(card['history_questions'], 'Открытых вопросов нет.')}</ol></section>
+<section class="t-card t-span-4"><header><h2>Задачи участников</h2></header><ol>{li(tasks, 'Открытых задач нет.')}</ol></section>
+</div></div></html>"""
 
 
 def _protocol_questions() -> list[str]:
