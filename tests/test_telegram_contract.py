@@ -121,3 +121,19 @@ def test_error_and_rate_limit_hide_token(tg):
         pult.send_text("x")
     assert e2.value.retry_after == 7
     assert isinstance(e2.value, TelegramError)
+
+
+def test_token_hidden_even_if_echoed_and_on_network_error(tg):
+    fake, pult = tg
+    fake.fail = (401, f"Unauthorized for bot{TOKEN}")
+    with pytest.raises(TelegramError) as e:
+        pult.send_text("x")
+    assert "SECRET_TOKEN_VALUE" not in str(e.value) and "SECRET_TOKEN_VALUE" not in e.value.description
+
+    def boom(request):
+        raise httpx.ConnectError(f"cannot connect to {request.url}", request=request)
+
+    broken = TelegramPult(TOKEN, CHAT, client=httpx.Client(transport=httpx.MockTransport(boom)))
+    with pytest.raises(TelegramError) as e2:
+        broken.send_text("x")
+    assert "SECRET_TOKEN_VALUE" not in str(e2.value) and e2.value.__cause__ is None
