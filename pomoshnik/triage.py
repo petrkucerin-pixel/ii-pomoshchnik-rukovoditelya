@@ -22,7 +22,8 @@ CLASSIFY_SYSTEM = """Ты помощник руководителя и разб�
 статус — статус задачи или проекта;
 продажи — клиент запрашивает КП или цены;
 клиенты — жалобы и обращения клиентов, переданные командой;
-доступы — доступы к системам.
+доступы — доступы к системам;
+спам — мошенничество, выигрыши, «срочно подтвердите счёт», продажа баз, сомнительные инвестиции.
 Если не уверен — ставь confidence ниже 0.6."""
 
 
@@ -52,6 +53,9 @@ def classify(llm, subject: str, body: str, from_name: str) -> tuple[str, str, fl
 def decide(profile: Profile, category: str, from_email: str, *, summary: str = "", confidence: float = 1.0) -> Decision:
     sender = profile.org.find_by_email(from_email) if profile.org else None
     role = sender.role if sender else "внешний"
+    if category == "спам" and not sender:      # спам игнорируем при любых правилах профиля
+        return Decision("игнорировать", category, "спам — руководителю не показываем", summary=summary,
+                        confidence=confidence, sender_role=role)
     if sender and sender.role == BOSS:
         return Decision("спросить_руководителя", category, f"письмо от руководителя руководителя ({sender.name})",
                         summary=summary, confidence=confidence, sender_role=role)

@@ -20,6 +20,7 @@ from .plan import build_day_plan, load_calendar, load_tasks, render_plan
 from .profile import Profile
 from .reports import Report, review
 from .protocol import ProtocolStore, build_protocol, questions_from_previous, render_markdown
+from .templates import Templates
 from .triage import Decision, classify, decide
 
 # Сколько минут руководителя экономит одно действие помощника. Допущения для метрики «освобождённые часы».
@@ -90,6 +91,38 @@ def meeting_brief(journal: Journal, memory, today: date, days: int = 7) -> tuple
     return history, list(latest.values())
 
 
+def letter_payload(e) -> dict:
+    """Письмо целиком в журнале: кабинет показывает переписку и после перезапуска."""
+    rec = getattr(e, "received", None)
+    return {"from": e.from_email, "from_name": e.from_name, "to": getattr(e, "to", "") or "",
+            "subject": e.subject, "body": e.body, "received": rec.isoformat() if rec else None}
+
+
+def decisions_from_journal(journal: Journal) -> list[dict]:
+    """Письма «ждут только вас», по которым руководитель ещё не решил. «Позже» — остаётся в очереди."""
+    asked, decided = [], set()
+    for a in journal.actions():
+        if a["kind"] == "mail_спросить_руководителя":
+            asked.append(a)
+        elif a["kind"] == "letter_decided":
+            verdict = (a["payload"] or {}).get("verdict") or a["summary"].split(":", 1)[0]
+            if verdict in ("yes", "no"):
+                decided.add(a["event_id"])
+    out = []
+    for a in asked:
+        if a["event_id"] in decided:
+            continue
+        ev = journal.event(a["event_id"]) or {}
+        pl, ap = ev.get("payload") or {}, a["payload"] or {}
+        subject = pl.get("subject", "")
+        out.append({"event_id": a["event_id"], "at": pl.get("received") or a["at"].isoformat(),
+                    "from": pl.get("from_name") or pl.get("from", ""), "email": pl.get("from", ""),
+                    "subject": subject, "summary": ap.get("summary") or subject,
+                    "reason": ap.get("reason") or a["summary"].removeprefix(subject + " — "),
+                    "id": ev.get("external_id", "")})
+    return out
+
+
 class Assistant:
     def __init__(self, profile: Profile, llm, pult, mailbox, journal: Journal, protocols: ProtocolStore, *,
                  calendar_path: str | Path, tasks_path: str | Path, outbox_mailbox=None, memory=None):
@@ -100,7 +133,8 @@ class Assistant:
         self.meetings = load_calendar(calendar_path)
         self.tasks = load_tasks(tasks_path)
         self.pending: Pending | None = None
-        self.decisions: list[dict] = []      # письма, которые ждут руководителя
+        self.decisions: list[dict] = decisions_from_journal(journal)   # письма, которые ждут руководителя
+        self.templates = Templates(profile.dir)
         self.digest: list[str] = []
         self.risks: list[str] = []           # риски для целей руководителя от ревизора
         self.reports: list[Report] = reports_from_journal(journal)   # отчёты и статусы команды для ревизора
@@ -115,12 +149,27 @@ class Assistant:
     def _log(self, kind: str, *, actor="assistant", path=None, summary="", payload=None, event_id=None):
         self.j.log_action(kind, actor=actor, path=path, summary=summary, payload=payload or {}, event_id=event_id)
 
+    @property
+    def signature(self) -> str:
+        return f"— ИИ-помощник {os.environ.get('LEADER_NAME_GENITIVE') or self.p.name}"
+
+    def send(self, to: str, template: str, kind: str, *, in_reply_to=None, event_id=None, **values) -> str:
+        """Письмо по шаблону руководителя. Каждое исходящее — в журнал, кабинет показывает его в переписке."""
+        values.setdefault("подпись", self.signature)
+        values.setdefault("руководитель", self.p.name)
+        subject, body = self.templates.render(template, **values)
+        mid = self.send_mail.send(to, subject, body, in_reply_to=in_reply_to)
+        self._log("mail_sent", path="now", event_id=event_id, summary=f"{to}: {subject}",
+                  payload={"to": to, "subject": subject, "body": body, "in_reply_to": in_reply_to,
+                           "kind": kind, "template": template, "message_id": mid})
+        return mid
+
     # ---------------- почта ----------------
     def process_inbox(self) -> dict:
         letters = self.mail.fetch_new()
         counts: dict[str, int] = {}
         for e in letters:
-            eid, new = self.j.record_event("mail", e.id, {"from": e.from_email, "subject": e.subject})
+            eid, new = self.j.record_event("mail", e.id, letter_payload(e))
             if not new:
                 continue
             cat, summ, conf = classify(self.llm, e.subject, e.body, e.from_name)
@@ -181,8 +230,8 @@ class Assistant:
             if key in done:
                 continue
             if f.to_email:
-                self.send_mail.send(f.to_email, f"Вопрос по отчёту: {f.topic}",
-                                    f.question + "\n\n— ИИ-помощник Ивана Петрова")
+                self.send(f.to_email, "review_question", "вопрос_ревизора", тема=f.topic, вопрос=f.question,
+                          имя=f.to_name)
             if f.leader:
                 self.risks.append(f.leader)
             self.digest.append(f.digest)
@@ -195,24 +244,26 @@ class Assistant:
 
     def _act(self, e, d: Decision, eid: int, report: Report | None = None):
         path = "decision" if d.action == "спросить_руководителя" else "now"
-        payload = {"category": d.category, "delegate_to": d.delegate_to, "minutes_saved": MINUTES_SAVED[d.action]}
+        payload = {"category": d.category, "delegate_to": d.delegate_to, "minutes_saved": MINUTES_SAVED[d.action],
+                   "reason": d.reason, "summary": d.summary}
         if report:      # отчёт хранится в журнале, чтобы ревизор видел его и после перезапуска
             payload["report"] = {"id": report.id, "from_name": report.from_name, "from_email": report.from_email,
                                  "received": report.received.isoformat(), "subject": report.subject,
                                  "body": report.body}
         self._log(f"mail_{d.action}", path=path, event_id=eid, summary=f"{e.subject} — {d.reason}", payload=payload)
         if d.action == "спросить_руководителя":
-            self.decisions.append({"event_id": eid, "from": e.from_name, "subject": e.subject,
+            rec = getattr(e, "received", None)
+            self.decisions.append({"event_id": eid, "at": rec.isoformat() if rec else self.clock.now().isoformat(),
+                                   "from": e.from_name, "subject": e.subject,
                                    "summary": d.summary, "reason": d.reason, "email": e.from_email, "id": e.id})
         elif d.action == "делегировать" and self.p.org:
             who = self.p.org.by_id[d.delegate_to]
-            self.send_mail.send(self.p.org.email_of(who), f"Fwd: {e.subject}",
-                                f"{who.name.split()[0]}, возьмите, пожалуйста, в работу и сообщите итог.\n\n"
-                                f"— {e.from_name}: {e.body}", in_reply_to=e.id)
+            self.send(self.p.org.email_of(who), "delegate", "передача", in_reply_to=e.id, event_id=eid,
+                      имя=who.name.split()[0], тема=e.subject, отправитель=e.from_name, текст=e.body)
             self.digest.append(f"Передано {who.name}: {e.subject}")
         elif d.action == "авто":
-            self.send_mail.send(e.from_email, f"Re: {e.subject}", "Принято, подтверждаю. — ИИ-помощник Ивана Петрова",
-                                in_reply_to=e.id)
+            self.send(e.from_email, "auto_reply", "автоответ", in_reply_to=e.id, event_id=eid,
+                      тема=e.subject, отправитель=e.from_name)
             self.digest.append(f"Подтверждено автоматически: {e.subject}")
         elif d.action == "в_сводку":
             self.digest.append(f"{e.from_name}: {d.summary or e.subject}")
@@ -241,29 +292,37 @@ class Assistant:
             [[Button("Согласовать", f"dec:yes:{x['event_id']}"), Button("Отказать", f"dec:no:{x['event_id']}")],
              [Button("Позже", f"dec:later:{x['event_id']}")]])
 
-    def _decide_letter(self, verdict: str, eid: int):
+    def decide_letter(self, eid: int, verdict: str, *, notify: bool = True) -> bool:
+        """Решение руководителя по письму: из Telegram или из кабинета. False — такого письма в очереди нет."""
+        if verdict not in ("yes", "no", "later"):
+            raise ValueError(verdict)
         x = next((d for d in self.decisions if d["event_id"] == eid), None)
         if not x:
-            return
+            return False
         self.decisions.remove(x)
         if verdict == "later":
             self.decisions.append(x)
         else:
-            text = "Согласовано." if verdict == "yes" else "К сожалению, не можем согласовать."
-            self.send_mail.send(x["email"], f"Re: {x['subject']}", f"{text}\n\n— Иван Петров (через ИИ-помощника)",
-                                in_reply_to=x["id"])
-        self._log("letter_decided", actor="human", path="decision", event_id=eid, summary=f"{verdict}: {x['subject']}")
-        self._next_decision()
+            self.send(x["email"], "decision_yes" if verdict == "yes" else "decision_no", "решение",
+                      in_reply_to=x["id"], event_id=eid, тема=x["subject"], отправитель=x["from"])
+        self._log("letter_decided", actor="human", path="decision", event_id=eid, summary=f"{verdict}: {x['subject']}",
+                  payload={"verdict": verdict})
+        if notify:
+            self._next_decision()
+        return True
+
+    def _decide_letter(self, verdict: str, eid: int):
+        self.decide_letter(eid, verdict)
 
     # ---------------- встречи ----------------
     def meeting_questions(self) -> list[str]:
         pid = self.protocols.last_approved()
         return questions_from_previous(self.protocols.protocol(pid, self.p.org)) if pid else []
 
-    def new_meeting(self, transcript: str, title: str, meeting_end: datetime) -> int:
+    def new_meeting(self, transcript: str, title: str, meeting_end: datetime, meeting_uid: str | None = None) -> int:
         p = build_protocol(self.llm, transcript, title=title, meeting_end=meeting_end, org=self.p.org,
                            rules=self.protocols.leader_rules())
-        pid = self.protocols.save_draft(p, transcript)
+        pid = self.protocols.save_draft(p, transcript, meeting_uid=meeting_uid)
         self._send_protocol(pid, p)
         rec = self.protocols.get(pid)
         self._log("protocol_draft", path="decision", summary=f"{title}: {rec['minutes_to_draft']:.1f} мин после встречи",
@@ -283,7 +342,7 @@ class Assistant:
         body = render_markdown(p)
         to = sorted({self.p.org.email_of(self.p.org.by_id[t.owner_id]) for t in p.tasks if t.owner_id} if self.p.org else set())
         for addr in to:
-            self.send_mail.send(addr, f"Протокол: {p.title}", body)
+            self.send(addr, "protocol_mail", "протокол", встреча=p.title, протокол=body)
         for t in p.tasks:
             self._log("task_assigned", path="now", summary=f"{t.owner}: {t.what} до {t.due.date().isoformat()}",
                       payload={"protocol_id": pid, "owner_id": t.owner_id, "due": t.due.isoformat()})

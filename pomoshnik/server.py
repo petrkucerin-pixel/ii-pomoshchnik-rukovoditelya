@@ -1,4 +1,4 @@
-"""Стенд: веб-экран, проверка живости, Telegram-бот в фоне, план дня по расписанию.
+"""Стенд: кабинет руководителя и его API, проверка живости, Telegram-бот в фоне, план дня по расписанию.
 
 Запуск: python -m pomoshnik.server  (порт PORT, по умолчанию 8080)
 """
@@ -11,16 +11,20 @@ import os
 import threading
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from typing import Literal
 
 import httpx
-from fastapi import FastAPI, Form
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi import FastAPI, Form, HTTPException
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from yadro.clock import TZ_EKB, SystemClock
 from yadro.journal import Journal
 
+from . import cabinet
 from .assistant import Assistant, meeting_brief, work_day
 from .channels.mail import CsvMailbox, OutlookStub, YandexMailbox
 from .channels.telegram import TelegramError, TelegramPult, TelegramRateLimit
@@ -29,10 +33,14 @@ from .metrics import compute_metrics
 from .profile import load_profile
 from .memory import Memory, collapse, period, topics
 from .protocol import ProtocolStore, questions_from_previous
+from .templates import TemplateError, discuss as discuss_template, to_dict as template_dict
 
 ROOT = Path(__file__).resolve().parent.parent
 RUNTIME = ROOT / "runtime"
 TASK = ROOT / "data" / "task"
+DEMO = ROOT / "data" / "demo"
+PROFILES = ROOT / "profiles"
+STATIC = Path(__file__).resolve().parent / "static"
 log = logging.getLogger("pomoshnik")
 
 
@@ -61,8 +69,18 @@ class CombinedMailbox:
         return self.stub.send(to, subject, body, in_reply_to=in_reply_to)
 
 
+class CsvInboxes:
+    """Учебная почта заказчика плюс наши демо-письма (спам) — одним ящиком."""
+
+    def __init__(self, *paths: Path):
+        self.boxes = [CsvMailbox(p) for p in paths if p.exists()]
+
+    def fetch_new(self):
+        return [e for b in self.boxes for e in b.fetch_new()]
+
+
 def make_mailbox(profile_id: str) -> CombinedMailbox:
-    stub = OutlookStub(CsvMailbox(TASK / "inbox.csv"), RUNTIME / f"{profile_id}_outlook_sent.jsonl")
+    stub = OutlookStub(CsvInboxes(TASK / "inbox.csv", DEMO / "spam.csv"), RUNTIME / f"{profile_id}_outlook_sent.jsonl")
     real = None
     if os.environ.get("MAIL_PROVIDER") == "yandex" and os.environ.get("YANDEX_APP_PASSWORD"):
         real = YandexMailbox(os.environ["YANDEX_ADDRESS"], os.environ["YANDEX_APP_PASSWORD"].replace(" ", ""),
@@ -97,13 +115,30 @@ def _bind_chat(token: str) -> str:
                 time.sleep(10)
 
 
+class DeferredPult:
+    """Telegram-пульт, который подключается позже — после /start руководителя. До этого сообщения не уходят."""
+
+    def __init__(self):
+        self.target: TelegramPult | None = None
+
+    def send_text(self, text):
+        return self.target.send_text(text) if self.target else 0
+
+    def send_buttons(self, text, buttons):
+        return self.target.send_buttons(text, buttons) if self.target else 0
+
+    def answer_callback(self, cid, text=""):
+        if self.target:
+            self.target.answer_callback(cid, text)
+
+
 class Stand:
     def __init__(self):
         load_dotenv(str(ROOT / ".env"))
         RUNTIME.mkdir(exist_ok=True)
         self.clock = SystemClock()
         self.profile_id = os.environ.get("PROFILE", "ivan_petrov")
-        pdir = ROOT / "profiles" / self.profile_id
+        pdir = PROFILES / self.profile_id
         self.journal = Journal(RUNTIME / f"{self.profile_id}.sqlite", self.clock)
         self.protocols = ProtocolStore(RUNTIME / f"{self.profile_id}_protocols.sqlite", self.clock)
         self.memory = Memory(RUNTIME / f"{self.profile_id}_memory.sqlite", self.clock)
@@ -111,8 +146,25 @@ class Stand:
             "openai-compatible", u.model, u.input_tokens, u.output_tokens, u.cost_usd, u.duration_ms))
         self.profile = load_profile(pdir, org_path=TASK / "org_structure.csv")
         self.mail = make_mailbox(self.profile_id)
-        self.assistant: Assistant | None = None
+        self.pult = DeferredPult()
+        self.lock = threading.RLock()        # бот и кабинет работают с одним помощником
+        self.assistant: Assistant = self._new_assistant()
         self.status = {"bot": "не запущен", "last_poll": None, "error": ""}
+
+    def _new_assistant(self) -> Assistant:
+        return Assistant(self.profile, self.llm, self.pult, self.mail, self.journal, self.protocols,
+                         calendar_path=TASK / "calendar.ics", tasks_path=TASK / "tasks.csv", memory=self.memory)
+
+    def restart_assistant(self):
+        """Как после перезапуска стенда: всё, что не в базах, теряется."""
+        with self.lock:
+            llm = self.assistant.llm
+            self.assistant = self._new_assistant()
+            self.assistant.llm = llm
+
+    def close(self):
+        for db in (self.journal, self.protocols, self.memory):
+            db.close()
 
     def start_bot(self):
         token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
@@ -125,16 +177,15 @@ class Stand:
         self.status["bot"] = "ждёт /start руководителя"
         chat = _bind_chat(token)
         pult = TelegramPult(token, chat)
-        self.assistant = Assistant(self.profile, self.llm, pult, self.mail, self.journal, self.protocols,
-                                   calendar_path=TASK / "calendar.ics", tasks_path=TASK / "tasks.csv",
-                                   memory=self.memory)
+        self.pult.target = pult
         self.status["bot"] = "работает"
         last_plan_day = None
         while True:
             try:
                 for u in pult.poll(timeout=25):
                     try:
-                        self.assistant.handle(u)
+                        with self.lock:
+                            self.assistant.handle(u)
                     except Exception as e:          # одна ошибка не должна ронять бота
                         log.exception("ошибка обработки")
                         self.status["error"] = f"{type(e).__name__}: {e}"[:200]
@@ -146,7 +197,8 @@ class Stand:
                 now = datetime.now(TZ_EKB)
                 if now.strftime("%H:%M") >= self.profile.plan_time and last_plan_day != now.date() and now.weekday() < 5:
                     last_plan_day = now.date()
-                    self.assistant.morning_plan(self.assistant.today())
+                    with self.lock:
+                        self.assistant.morning_plan(self.assistant.today())
             except TelegramRateLimit as e:
                 time.sleep(max(e.retry_after, 1))
             except TelegramError as e:
@@ -166,6 +218,7 @@ async def _lifespan(_app):
 
 
 app = FastAPI(title="ИИ-помощник руководителя", lifespan=_lifespan)
+app.mount("/static", StaticFiles(directory=STATIC, check_dir=False), name="static")
 
 
 @app.get("/health")
@@ -180,11 +233,10 @@ def api_metrics():
 
 @app.post("/meeting")
 def post_meeting(title: str = Form(...), transcript: str = Form(...), minutes_ago: int = Form(0)):
-    if not stand.assistant:
-        return JSONResponse({"error": "бот ещё не подключён к руководителю: напишите боту /start"}, status_code=409)
     end = datetime.now(TZ_EKB) - timedelta(minutes=minutes_ago)
-    stand.assistant.new_meeting(transcript, title, end)
-    return RedirectResponse("/", status_code=303)
+    with stand.lock:
+        stand.assistant.new_meeting(transcript, title, end)
+    return RedirectResponse("/classic", status_code=303)
 
 
 def _avatar_client():
@@ -194,7 +246,7 @@ def _avatar_client():
 
 
 @app.get("/avatar", response_class=HTMLResponse)
-def avatar_page(title: str = "Еженедельная встреча команды"):
+def avatar_page(title: str = "Еженедельная встреча команды", uid: str | None = None):
     from .avatar import build_context_prompt, opening_text
     la = _avatar_client()
     avatar_id = os.environ.get("LIVEAVATAR_AVATAR_ID", "")
@@ -207,7 +259,7 @@ def avatar_page(title: str = "Еженедельная встреча коман
     a = stand.assistant
     questions = _protocol_questions()
     history, history_questions = meeting_brief(stand.journal, stand.memory, work_day(stand.clock))
-    tasks = [f"{t.task} — {t.owner}, до {t.due.strftime('%d.%m')}" for t in (a.tasks if a else [])]
+    tasks = [f"{t.task} — {t.owner}, до {t.due.strftime('%d.%m')}" for t in a.tasks]
     leader = stand.profile.name
     leader_gen = os.environ.get("LEADER_NAME_GENITIVE", "Ивана Петрова")
     ctx = la.create_context(f"{title} {datetime.now(TZ_EKB):%d.%m %H:%M}",
@@ -218,7 +270,8 @@ def avatar_page(title: str = "Еженедельная встреча коман
     emb = la.create_embed(avatar_id, ctx, la.voice_id())
     embed_id = emb.get("id") or emb.get("embed_id")
     url = emb.get("url") or emb.get("embed_url") or ""
-    (RUNTIME / "avatar.json").write_text(json.dumps({"embed_id": embed_id, "title": title, "context_id": ctx},
+    (RUNTIME / "avatar.json").write_text(json.dumps({"embed_id": embed_id, "title": title, "context_id": ctx,
+                                                     "meeting_uid": uid},
                                                     ensure_ascii=False), encoding="utf-8")
     stand.journal.log_action("avatar_meeting_ready",
                              summary=f"{title}: вопросов {len(questions)}, из истории {len(history_questions)}",
@@ -259,9 +312,9 @@ def avatar_finish():
     end = end_time(s, TZ_EKB)
     stand.journal.log_action("avatar_meeting_done", summary=f"{state['title']}: {s.duration} с",
                              payload={"session_id": s.id, "duration": s.duration})
-    if stand.assistant:
-        stand.assistant.new_meeting(text, state["title"], end)
-    return RedirectResponse("/", status_code=303)
+    with stand.lock:
+        stand.assistant.new_meeting(text, state["title"], end, meeting_uid=state.get("meeting_uid"))
+    return RedirectResponse("/#meetings", status_code=303)
 
 
 def _protocol_questions() -> list[str]:
@@ -281,7 +334,7 @@ def _memory_block(q: str) -> str:
     all_topics = topics(stand.memory)
     n = sum(len(fs) for fs in all_topics)
     head = (f"<h2>Память помощника</h2><p class=k>Фактов {n}, тем {len(all_topics)}. Каждый факт сверен с цитатой "
-            f"из письма или протокола.</p><form method=get action=/><input name=q value=\"{e(q)}\" "
+            f"из письма или протокола.</p><form method=get action=/classic><input name=q value=\"{e(q)}\" "
             f"placeholder=\"Что известно по… (например, Облако Плюс)\"><button>Найти</button></form>")
     if q.strip():
         facts = stand.memory.history(q) or stand.memory.search(q)
@@ -297,7 +350,13 @@ def _memory_block(q: str) -> str:
 
 
 @app.get("/", response_class=HTMLResponse)
-def index(q: str = ""):
+def root(q: str = ""):
+    page = STATIC / "cabinet" / "index.html"
+    return FileResponse(page, media_type="text/html") if page.exists() else classic(q)
+
+
+@app.get("/classic", response_class=HTMLResponse)
+def classic(q: str = ""):
     m = compute_metrics(stand.journal, stand.protocols)
     e = html.escape
     _, history_questions = meeting_brief(stand.journal, None, work_day(stand.clock))
@@ -334,6 +393,189 @@ summary{{cursor:pointer;min-height:24px}} li{{margin:4px 0}}
 <button>Сделать протокол</button></form>
 <h2>Журнал</h2><div class=tbl><table>{rows}</table></div>
 </main></html>"""
+
+
+# ---------------- API кабинета (TASK_07, контракт в TASK_08_КАБИНЕТ_GPT.md) ----------------
+class DecisionIn(BaseModel):
+    verdict: Literal["yes", "no", "later"]
+
+
+class TemplateIn(BaseModel):
+    subject: str
+    body: str
+
+
+class DiscussIn(BaseModel):
+    message: str
+    subject: str
+    body: str
+
+
+class TranscriptIn(BaseModel):
+    title: str
+    transcript: str
+    minutes_ago: int = 0
+    meeting_uid: str | None = None
+
+
+class EditIn(BaseModel):
+    instruction: str
+
+
+@app.get("/api/today")
+def api_today():
+    with stand.lock:
+        return cabinet.today(stand.assistant, stand.protocols)
+
+
+@app.post("/api/decisions/{event_id}")
+def api_decide(event_id: int, d: DecisionIn):
+    with stand.lock:
+        if not stand.assistant.decide_letter(event_id, d.verdict, notify=False):
+            raise HTTPException(404, "такого письма нет среди ждущих решения")
+    return {"ok": True}
+
+
+@app.get("/api/mail")
+def api_mail():
+    with stand.lock:
+        return cabinet.mail(stand.assistant)
+
+
+@app.get("/api/templates")
+def api_templates():
+    return {"templates": [template_dict(t) for t in stand.assistant.templates.all()]}
+
+
+def _template(key: str):
+    try:
+        return stand.assistant.templates.get(key)
+    except KeyError:
+        raise HTTPException(404, "нет такого шаблона") from None
+
+
+@app.put("/api/templates/{key}")
+def api_template_save(key: str, t: TemplateIn):
+    old = _template(key)
+    with stand.lock:
+        try:
+            new = stand.assistant.templates.save(key, t.subject, t.body)
+        except TemplateError as e:
+            raise HTTPException(422, str(e)) from None
+        last_edit = max((x["id"] for x in stand.journal.actions()
+                         if x["kind"] == "template_edit" and x["payload"].get("key") == key), default=0)
+        asks = [x["payload"]["message"] for x in stand.journal.actions()
+                if x["kind"] == "template_discuss" and x["payload"].get("key") == key and x["id"] > last_edit]
+        stand.journal.log_action("template_edit", actor="human", path="now",
+                                 summary=asks[-1] if asks else "правка вручную",
+                                 payload={"key": key, "title": old.title, "subject": t.subject, "body": t.body,
+                                          "old_subject": old.subject, "old_body": old.body})
+    return template_dict(new)
+
+
+@app.post("/api/templates/{key}/discuss")
+def api_template_discuss(key: str, d: DiscussIn):
+    t = _template(key)
+    res = discuss_template(stand.assistant.llm, t, d.message, d.subject, d.body)
+    stand.journal.log_action("template_discuss", actor="human", summary=d.message[:200],
+                             payload={"key": key, "message": d.message, "reply": res["reply"]})
+    return res
+
+
+@app.get("/api/meetings")
+def api_meetings(start: date | None = None, days: int = 7):
+    with stand.lock:
+        a = stand.assistant
+        return cabinet.meetings(a, start or a.today() - timedelta(days=a.today().weekday()), max(1, min(days, 42)))
+
+
+@app.get("/api/meetings/{uid}")
+def api_meeting(uid: str):
+    with stand.lock:
+        m = cabinet.meeting(stand.assistant, uid)
+    if m is None:
+        raise HTTPException(404, "нет такой встречи")
+    return m
+
+
+@app.post("/api/meetings/transcript")
+def api_transcript(t: TranscriptIn):
+    end = datetime.now(TZ_EKB) - timedelta(minutes=t.minutes_ago)
+    with stand.lock:
+        pid = stand.assistant.new_meeting(t.transcript, t.title, end, meeting_uid=t.meeting_uid)
+    return {"protocol_id": pid}
+
+
+@app.get("/api/protocols")
+def api_protocols():
+    with stand.lock:
+        return cabinet.protocols(stand.assistant)
+
+
+def _draft(pid: int) -> dict:
+    rec = stand.protocols.get(pid)
+    if rec is None:
+        raise HTTPException(404, "нет такого протокола")
+    if rec["status"] != "черновик":
+        raise HTTPException(409, f"протокол уже {rec['status']}")
+    return rec
+
+
+@app.post("/api/protocols/{pid}/approve")
+def api_protocol_approve(pid: int):
+    with stand.lock:
+        _draft(pid)
+        stand.assistant.approve_protocol(pid)
+    return {"ok": True}
+
+
+@app.post("/api/protocols/{pid}/reject")
+def api_protocol_reject(pid: int):
+    with stand.lock:
+        _draft(pid)
+        stand.protocols.reject(pid)
+        stand.journal.log_action("protocol_rejected", actor="human", path="decision", payload={"protocol_id": pid})
+    return {"ok": True}
+
+
+@app.post("/api/protocols/{pid}/edit")
+def api_protocol_edit(pid: int, e: EditIn):
+    with stand.lock:
+        _draft(pid)
+        a = stand.assistant
+        a.protocols.apply_edit(pid, e.instruction, a.llm, a.p.org)
+        stand.journal.log_action("protocol_edit", actor="human", path="decision", summary=e.instruction,
+                                 payload={"protocol_id": pid})
+        return cabinet.protocol_dict(a, pid)
+
+
+@app.get("/api/tasks")
+def api_tasks():
+    with stand.lock:
+        return cabinet.tasks(stand.assistant)
+
+
+@app.get("/api/memory")
+def api_memory(q: str = ""):
+    with stand.lock:
+        return cabinet.memory(stand.assistant, q)
+
+
+@app.get("/api/edits")
+def api_edits():
+    with stand.lock:
+        return cabinet.edits(stand.assistant)
+
+
+@app.get("/api/profile")
+def api_profile():
+    return cabinet.profile(stand.assistant)
+
+
+@app.get("/api/journal")
+def api_journal(limit: int = 50):
+    with stand.lock:
+        return cabinet.journal(stand.assistant, limit)
 
 
 def main():

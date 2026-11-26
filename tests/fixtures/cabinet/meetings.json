@@ -1,0 +1,47 @@
+{
+ "start": "2026-12-07",
+ "days": 7,
+ "meetings": [
+  {
+   "uid": "ev001@company.example",
+   "start": "2026-12-07T10:00:00+05:00",
+   "end": "2026-12-07T10:30:00+05:00",
+   "title": "Планёрка отдела",
+   "category": "операционная",
+   "attendees": [
+    {
+     "name": "Ольга Смирнова",
+     "email": "p02@company.example"
+    },
+    {
+     "name": "Сергей Морозов",
+     "email": "p05@company.example"
+    }
+   ],
+   "protocol_id": 2,
+   "protocol_status": "черновик"
+  },
+  {
+   "uid": "ev014@company.example",
+   "start": "2026-12-08T15:00:00+05:00",
+   "end": "2026-12-08T15:45:00+05:00",
+   "title": "1:1 с Ольгой Смирновой",
+   "category": "один_на_один",
+   "attendees": [
+    {
+     "name": "Ольга Смирнова",
+     "email": "p02@company.example"
+    }
+   ],
+   "protocol_id": null,
+   "protocol_status": null
+  }
+ ],
+ "focus": [
+  {
+   "start": "2026-12-07T13:00:00+05:00",
+   "end": "2026-12-07T15:00:00+05:00",
+   "title": "Окно для фокуса"
+  }
+ ]
+}

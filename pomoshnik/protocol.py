@@ -172,15 +172,23 @@ class ProtocolStore:
         self.conn = sqlite3.connect(str(path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(_SCHEMA)
+        cols = {r[1] for r in self.conn.execute("PRAGMA table_info(protocols)")}
+        if "meeting_uid" not in cols:       # базы, созданные до привязки протокола к встрече календаря
+            self.conn.execute("ALTER TABLE protocols ADD COLUMN meeting_uid TEXT")
+            self.conn.commit()
 
     def close(self):
         self.conn.close()
 
-    def save_draft(self, p: Protocol, transcript: str = "") -> int:
+    def ids(self) -> list[int]:
+        return [r[0] for r in self.conn.execute("SELECT id FROM protocols ORDER BY id")]
+
+    def save_draft(self, p: Protocol, transcript: str = "", meeting_uid: str | None = None) -> int:
         cur = self.conn.execute(
-            "INSERT INTO protocols (title, meeting_end, created_at, status, data, transcript) VALUES (?,?,?,?,?,?)",
+            "INSERT INTO protocols (title, meeting_end, created_at, status, data, transcript, meeting_uid) "
+            "VALUES (?,?,?,?,?,?,?)",
             (p.title, to_db(p.meeting_end), to_db(self.clock.now()), "черновик",
-             json.dumps(p.raw, ensure_ascii=False), transcript))
+             json.dumps(p.raw, ensure_ascii=False), transcript, meeting_uid))
         self.conn.commit()
         return cur.lastrowid
 
@@ -193,6 +201,7 @@ class ProtocolStore:
         approved = from_db(r["approved_at"], tz)
         edits = self.conn.execute("SELECT COUNT(*) FROM protocol_edits WHERE protocol_id = ?", (pid,)).fetchone()[0]
         return {"id": r["id"], "title": r["title"], "status": r["status"], "meeting_end": end,
+                "meeting_uid": r["meeting_uid"],
                 "data": json.loads(r["data"]), "transcript": r["transcript"], "edits": edits,
                 "minutes_to_draft": (created - end).total_seconds() / 60,
                 "minutes_to_approved": (approved - end).total_seconds() / 60 if approved else None}

@@ -1,0 +1,85 @@
+"""Контракт экрана кабинета (TASK_08_GPT). Менять может только Claude."""
+import re
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+import pomoshnik.server as srv
+
+STATIC = Path(srv.__file__).resolve().parent / "static" / "cabinet"
+SECTIONS = {"today": "Сегодня", "mail": "Переписка", "meetings": "Совещания", "memory": "Память", "profile": "Профиль"}
+ENDPOINTS = ["/api/today", "/api/decisions/", "/api/mail", "/api/templates", "/discuss", "/api/meetings",
+             "/api/meetings/transcript", "/api/protocols", "/approve", "/reject", "/edit", "/api/tasks", "/api/memory",
+             "/api/edits", "/api/profile", "/api/metrics", "/api/journal", "/avatar"]
+
+
+def read(name):
+    return (STATIC / name).read_text(encoding="utf-8")
+
+
+@pytest.fixture
+def client(tmp_path, monkeypatch):
+    monkeypatch.setattr(srv, "RUNTIME", tmp_path)
+    monkeypatch.setattr(srv, "load_dotenv", lambda *a, **k: None)
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    with TestClient(srv.app) as c:
+        yield c
+    srv.stand.close()
+
+
+def test_root_serves_cabinet_with_five_sections(client):
+    page = client.get("/").text
+    assert 'name="viewport"' in page and "cabinet.js" in page and "cabinet.css" in page
+    for key, title in SECTIONS.items():
+        assert f'data-section="{key}"' in page, key
+        assert title in page, title
+
+
+def test_static_files_served(client):
+    for name in ("cabinet.js", "cabinet.css"):
+        assert client.get(f"/static/cabinet/{name}").status_code == 200
+
+
+def test_js_uses_every_endpoint():
+    js = read("cabinet.js")
+    missing = [e for e in ENDPOINTS if e not in js]
+    assert not missing, missing
+
+
+def test_mail_groups_and_templates_labels():
+    text = read("index.html") + read("cabinet.js")
+    for word in ("Контрагенты", "Отделы", "Рассылки", "Спам", "Шаблоны", "Входящие", "Исходящие",
+                 "Обсудить с помощником", "Сохранить"):
+        assert word in text, word
+
+
+def test_calendar_week_and_day_views():
+    text = read("index.html") + read("cabinet.js")
+    assert "Неделя" in text and "День" in text and "Сегодня" in text
+
+
+def test_no_external_resources():
+    for name in ("index.html", "cabinet.js", "cabinet.css"):
+        assert not re.search(r"https?://", read(name)), name
+
+
+def test_api_text_never_goes_through_html_parsing():
+    js = read("cabinet.js")
+    for bad in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval("):
+        assert bad not in js, bad
+
+
+def test_phone_layout_rules():
+    css = read("cabinet.css")
+    assert re.search(r"@media[^{]*max-width", css)
+    assert re.search(r"min-height:\s*44px", css)
+
+
+@pytest.mark.skipif(not shutil.which("node"), reason="нет node")
+def test_js_syntax():
+    r = subprocess.run(["node", "--check", str(STATIC / "cabinet.js")], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr

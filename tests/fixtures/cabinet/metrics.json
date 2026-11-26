@@ -1,0 +1,18 @@
+{
+ "letters": 82,
+ "letters_without_leader": 37,
+ "share_without_leader": 0.451,
+ "hours_saved": 3.55,
+ "protocol_minutes_to_draft": 0.1,
+ "protocol_minutes_to_approved": null,
+ "leader_edits": 0,
+ "llm_cost_usd": 0.0603,
+ "cards": {
+  "писем разобрано": 82,
+  "без руководителя": "45 %",
+  "часов освобождено": 3.55,
+  "встреча → протокол, мин": 0.1,
+  "правок руководителя": 0,
+  "расходы на модель, $": 0.0603
+ }
+}

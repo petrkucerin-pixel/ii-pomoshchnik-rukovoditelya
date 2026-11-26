@@ -12,9 +12,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     with TestClient(srv.app) as c:
         yield c
-    srv.stand.journal.close()
-    srv.stand.protocols.close()
-    srv.stand.memory.close()
+    srv.stand.close()
 
 
 def test_health_without_bot_token(client):
@@ -27,7 +25,7 @@ def test_index_and_metrics(client, tmp_path):
     srv.stand.journal.log_action("mail_спросить_руководителя", path="decision", payload={"minutes_saved": 2})
     m = client.get("/api/metrics").json()
     assert m["letters"] == 2 and m["share_without_leader"] == 0.5 and m["hours_saved"] == pytest.approx(5 / 60, abs=0.01)
-    page = client.get("/").text
+    page = client.get("/classic").text
     assert "ИИ-помощник руководителя" in page and "Иван Петров" in page and "без руководителя" in page
     assert (tmp_path / "ivan_petrov.sqlite").exists()
 
@@ -63,9 +61,12 @@ def test_combined_mailbox_survives_yandex_failure(tmp_path):
     assert len(box.fetch_new()) == 80 and "IMAP" in box.last_error
 
 
-def test_meeting_before_bot_bound(client):
-    r = client.post("/meeting", data={"title": "x", "transcript": "y"})
-    assert r.status_code == 409
+def test_meeting_before_bot_bound_makes_draft_without_telegram(client):
+    from pomoshnik.llm import StubLLM
+    srv.stand.assistant.llm = StubLLM(default={"topics": [], "decisions": [], "tasks": [], "open_questions": []})
+    r = client.post("/meeting", data={"title": "x", "transcript": "y"}, follow_redirects=False)
+    assert r.status_code == 303 and srv.stand.protocols.get(1)["status"] == "черновик"
+    assert srv.stand.pult.target is None                 # в Telegram ничего не ушло: руководитель ещё не нажал /start
 
 
 def _seed_memory():
@@ -83,16 +84,16 @@ def _seed_memory():
 def test_index_shows_memory_and_avatar_questions(client, monkeypatch):
     monkeypatch.setenv("DEMO_DATE", "2026-12-11")
     _seed_memory()
-    page = client.get("/").text
+    page = client.get("/classic").text
     assert "Память помощника" in page and "Облако Плюс" in page and "ждём до 12.12" in page
     assert "Что аватар спросит на встрече" in page and "что мешает подписать договор" in page
 
 
 def test_index_memory_search(client):
     _seed_memory()
-    page = client.get("/", params={"q": "облака"}).text
+    page = client.get("/classic", params={"q": "облака"}).text
     assert "Договор на подписи у юристов" in page and "m022" in page
-    assert "ничего нет" in client.get("/", params={"q": "Марс"}).text
+    assert "ничего нет" in client.get("/classic", params={"q": "Марс"}).text
 
 
 def test_index_escapes_memory(client):
@@ -101,5 +102,5 @@ def test_index_escapes_memory(client):
     from yadro.clock import TZ_EKB
     srv.stand.memory.add([Fact("<script>x</script>", "сделка", "<b>что</b>", "кто",
                                datetime(2026, 12, 8, tzinfo=TZ_EKB), "m1", "цитата из письма")])
-    page = client.get("/").text
+    page = client.get("/classic").text
     assert "<script>x</script>" not in page and "&lt;script&gt;" in page

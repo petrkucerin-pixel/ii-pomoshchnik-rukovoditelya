@@ -1,0 +1,128 @@
+{
+ "groups": [
+  {
+   "key": "counterparty",
+   "title": "Контрагенты"
+  },
+  {
+   "key": "team",
+   "title": "Отделы: участники совещаний"
+  },
+  {
+   "key": "internal",
+   "title": "Отделы: другие"
+  },
+  {
+   "key": "newsletter",
+   "title": "Рассылки"
+  },
+  {
+   "key": "spam",
+   "title": "Спам"
+  }
+ ],
+ "letters": [
+  {
+   "id": "m001",
+   "direction": "in",
+   "at": "2026-12-07T08:38:00+05:00",
+   "from_name": "Клиент «Ромашка-Ритейл»",
+   "from_email": "client1@romashka.example",
+   "to_name": "Иван Петров",
+   "to_email": "p01@company.example",
+   "subject": "Сроки запуска интеграции",
+   "body": "Подтвердите, пожалуйста, что запуск будет до 25 декабря — нам важно для отчётности.",
+   "category": "обязательства_клиентам",
+   "action": "спросить_руководителя",
+   "reason": "обязательства клиентам — только с вашим подтверждением",
+   "group": "counterparty",
+   "party": "Ромашка-Ритейл",
+   "party_note": "клиент"
+  },
+  {
+   "id": "m022",
+   "direction": "in",
+   "at": "2026-12-08T14:10:00+05:00",
+   "from_name": "Сергей Морозов",
+   "from_email": "p05@company.example",
+   "to_name": "Иван Петров",
+   "to_email": "p01@company.example",
+   "subject": "Статус по партнёру «Облако Плюс»",
+   "body": "Договор на подписи у юристов, ждём до 12.12.",
+   "category": "статус",
+   "action": "в_сводку",
+   "reason": "отчёты и статусы — в сводку",
+   "group": "team",
+   "party": "Сергей Морозов",
+   "party_note": "Руководитель партнёрского канала"
+  },
+  {
+   "id": "out-7",
+   "direction": "out",
+   "at": "2026-12-11T17:45:00+05:00",
+   "from_name": "ИИ-помощник Ивана Петрова",
+   "from_email": "p01@company.example",
+   "to_name": "Сергей Морозов",
+   "to_email": "p05@company.example",
+   "subject": "Вопрос по отчёту: Статус по партнёру «Облако Плюс»",
+   "body": "Сергей, по «Облако Плюс» статус не меняется 4 дн. Что мешает и чем помочь?",
+   "category": "вопрос_ревизора",
+   "action": "отправлено",
+   "reason": "шаблон «Вопрос ревизора»",
+   "group": "team",
+   "party": "Сергей Морозов",
+   "party_note": "Руководитель партнёрского канала"
+  },
+  {
+   "id": "m045",
+   "direction": "in",
+   "at": "2026-12-09T11:00:00+05:00",
+   "from_name": "Виктор Орлов",
+   "from_email": "p09@company.example",
+   "to_name": "Иван Петров",
+   "to_email": "p01@company.example",
+   "subject": "Итоги встречи с партнёром",
+   "body": "Как прошла встреча с «Облако Плюс»? Коротко в двух строках.",
+   "category": "руководство",
+   "action": "спросить_руководителя",
+   "reason": "письма руководству — только с подтверждением",
+   "group": "internal",
+   "party": "Виктор Орлов",
+   "party_note": "руководитель руководителя"
+  },
+  {
+   "id": "m050",
+   "direction": "in",
+   "at": "2026-12-09T12:00:00+05:00",
+   "from_name": "CRM Digest",
+   "from_email": "digest@crm.example",
+   "to_name": "Иван Петров",
+   "to_email": "p01@company.example",
+   "subject": "Новости CRM за неделю",
+   "body": "Пять новых функций…",
+   "category": "рассылка",
+   "action": "игнорировать",
+   "reason": "рассылки — без ответа",
+   "group": "newsletter",
+   "party": "CRM Digest",
+   "party_note": "рассылка"
+  },
+  {
+   "id": "s001",
+   "direction": "in",
+   "at": "2026-12-09T03:12:00+05:00",
+   "from_name": "Выигрыш",
+   "from_email": "prize@lucky.example",
+   "to_name": "Иван Петров",
+   "to_email": "p01@company.example",
+   "subject": "Вы выиграли iPhone",
+   "body": "Перейдите по ссылке…",
+   "category": "спам",
+   "action": "игнорировать",
+   "reason": "спам — не показываем руководителю",
+   "group": "spam",
+   "party": "Выигрыш",
+   "party_note": "спам"
+  }
+ ]
+}
