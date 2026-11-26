@@ -163,14 +163,18 @@ def _cut_note(n: int) -> str:
     return f"…и ещё {n} тем постарше, подробности — в памяти помощника."
 
 
+def topics(mem: Memory) -> list[list[Fact]]:
+    """Факты по темам: внутри темы по времени, темы — свежие сверху."""
+    by: dict[str, list[Fact]] = {}
+    for f in mem.all():
+        by.setdefault(topic_key(f.topic), []).append(f)
+    return sorted(by.values(), key=lambda fs: fs[-1].when, reverse=True)
+
+
 def brief(mem: Memory, max_chars: int = 20000) -> str:
     """Вся накопленная история по темам для контекста аватара. Свежие темы выше; не влезло — старые темы отрезаются."""
-    topics: dict[str, list[Fact]] = {}
-    for f in mem.all():
-        topics.setdefault(topic_key(f.topic), []).append(f)
-    order = sorted(topics.values(), key=lambda fs: fs[-1].when, reverse=True)
     blocks = ["\n".join([f"{fs[-1].topic} ({fs[-1].kind})"] + [f"- {group_line(g)}" for g in collapse(fs)])
-              for fs in order]
+              for fs in topics(mem)]
     out, used = [], 0
     for i, b in enumerate(blocks):
         rest = len(blocks) - i - 1

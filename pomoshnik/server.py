@@ -21,14 +21,14 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from yadro.clock import TZ_EKB, SystemClock
 from yadro.journal import Journal
 
-from .assistant import Assistant
+from .assistant import Assistant, meeting_brief, work_day
 from .channels.mail import CsvMailbox, OutlookStub, YandexMailbox
 from .channels.telegram import TelegramError, TelegramPult, TelegramRateLimit
 from .llm import from_env, load_dotenv
 from .metrics import compute_metrics
 from .profile import load_profile
-from .memory import Memory, brief
-from .protocol import ProtocolStore
+from .memory import Memory, collapse, period, topics
+from .protocol import ProtocolStore, questions_from_previous
 
 ROOT = Path(__file__).resolve().parent.parent
 RUNTIME = ROOT / "runtime"
@@ -205,8 +205,8 @@ def avatar_page(title: str = "Еженедельная встреча коман
         return HTMLResponse(f"<p>Аватар ещё готовится: {html.escape(status)}. Обновите страницу через минуту.</p>",
                             status_code=503)
     a = stand.assistant
-    questions = a.meeting_questions() if a else []
-    history, history_questions = a.meeting_brief() if a else (brief(stand.memory), [])
+    questions = _protocol_questions()
+    history, history_questions = meeting_brief(stand.journal, stand.memory, work_day(stand.clock))
     tasks = [f"{t.task} — {t.owner}, до {t.due.strftime('%d.%m')}" for t in (a.tasks if a else [])]
     leader = stand.profile.name
     leader_gen = os.environ.get("LEADER_NAME_GENITIVE", "Ивана Петрова")
@@ -264,10 +264,45 @@ def avatar_finish():
     return RedirectResponse("/", status_code=303)
 
 
+def _protocol_questions() -> list[str]:
+    pid = stand.protocols.last_approved()
+    return questions_from_previous(stand.protocols.protocol(pid, stand.profile.org)) if pid else []
+
+
+def _fact_rows(facts) -> str:
+    e = html.escape
+    return "".join(f"<tr><td>{e(period(g))}</td><td>{e(g[0].who)}</td><td>{e(g[-1].what)}<br>"
+                   f"<i>«{e(g[0].quote)}»</i> <span class=k>{e(', '.join(x.source for x in g))}</span></td></tr>"
+                   for g in collapse(facts))
+
+
+def _memory_block(q: str) -> str:
+    e = html.escape
+    all_topics = topics(stand.memory)
+    n = sum(len(fs) for fs in all_topics)
+    head = (f"<h2>Память помощника</h2><p class=k>Фактов {n}, тем {len(all_topics)}. Каждый факт сверен с цитатой "
+            f"из письма или протокола.</p><form method=get action=/><input name=q value=\"{e(q)}\" "
+            f"placeholder=\"Что известно по… (например, Облако Плюс)\"><button>Найти</button></form>")
+    if q.strip():
+        facts = stand.memory.history(q) or stand.memory.search(q)
+        body = (f"<div class=tbl><table>{_fact_rows(facts)}</table></div>" if facts
+                else f"<p>В памяти ничего нет по «{e(q)}».</p>")
+        return head + body
+    if not all_topics:
+        return head + "<p>Память пока пуста: помощник наполняет её при разборе почты и утверждении протоколов.</p>"
+    items = "".join(f"<details><summary><b>{e(fs[-1].topic)}</b> <span class=k>{e(fs[-1].kind)} · "
+                    f"{fs[-1].when:%d.%m}</span> — {e(fs[-1].what)}</summary>"
+                    f"<div class=tbl><table>{_fact_rows(fs)}</table></div></details>" for fs in all_topics[:30])
+    return head + items
+
+
 @app.get("/", response_class=HTMLResponse)
-def index():
+def index(q: str = ""):
     m = compute_metrics(stand.journal, stand.protocols)
     e = html.escape
+    _, history_questions = meeting_brief(stand.journal, None, work_day(stand.clock))
+    aq = [*_protocol_questions(), *history_questions]
+    avatar_q = "".join(f"<li>{e(x)}</li>" for x in aq) or "<li>Открытых вопросов нет.</li>"
     acts = stand.journal.actions()[-25:][::-1]
     rows = "".join(f"<tr><td>{a['at'].strftime('%d.%m %H:%M')}</td><td>{e(a['actor'])}</td><td>{e(a['kind'])}</td>"
                    f"<td>{e(a['summary'][:120])}</td></tr>" for a in acts)
@@ -284,10 +319,15 @@ main{{max-width:960px;margin:auto;padding:16px}} h1{{font-size:20px}} h2{{font-s
 td{{padding:6px 8px;border-bottom:1px solid #eee;vertical-align:top}}
 textarea,input{{width:100%;box-sizing:border-box;font:inherit;padding:8px;border:1px solid #ccd;border-radius:8px}}
 button{{min-height:44px;padding:0 18px;border:0;border-radius:10px;background:#245c73;color:#fff;font:inherit;margin-top:8px}}
+details{{background:#fff;border-radius:12px;padding:10px 12px;margin:6px 0;box-shadow:0 1px 3px #0001}}
+summary{{cursor:pointer;min-height:24px}} li{{margin:4px 0}}
 </style><main>
 <h1>ИИ-помощник руководителя · {e(stand.profile.name)}</h1>
 <p><a href="/avatar">Встреча с аватаром →</a></p><p>Бот: {e(stand.status["bot"])}. Я — ИИ-помощник, представляюсь так в переписке и на встречах.</p>
 <div class=cards>{cards}</div>
+<h2>Что аватар спросит на встрече</h2><ol>{avatar_q}</ol>
+<p class=k>Плюс вся история из памяти ниже: если участник поднимет тему, аватар напомнит, что и когда сообщали раньше.</p>
+{_memory_block(q)}
 <h2>Новая встреча → протокол на утверждение в Telegram</h2>
 <form method=post action=/meeting><input name=title placeholder="Название встречи" required>
 <textarea name=transcript rows=6 placeholder="Расшифровка встречи" required></textarea>

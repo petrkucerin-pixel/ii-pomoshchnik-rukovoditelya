@@ -66,3 +66,40 @@ def test_combined_mailbox_survives_yandex_failure(tmp_path):
 def test_meeting_before_bot_bound(client):
     r = client.post("/meeting", data={"title": "x", "transcript": "y"})
     assert r.status_code == 409
+
+
+def _seed_memory():
+    from datetime import datetime
+    from pomoshnik.memory import Fact
+    from yadro.clock import TZ_EKB
+    srv.stand.memory.add([Fact("Облако Плюс", "партнёр", "договор у юристов, ждём до 12.12", "Сергей Морозов",
+                               datetime(2026, 12, 8, 14, 10, tzinfo=TZ_EKB), "m022", "Договор на подписи у юристов")])
+    srv.stand.journal.log_action("report_review", path="now", summary="Облако Плюс: статус не меняется",
+                                 payload={"kind": "нет_движения", "topic": "Облако Плюс", "day": "2026-12-11",
+                                          "to": "p05@company.example", "to_name": "Сергей Морозов",
+                                          "question": "Сергей, что мешает подписать договор?"})
+
+
+def test_index_shows_memory_and_avatar_questions(client, monkeypatch):
+    monkeypatch.setenv("DEMO_DATE", "2026-12-11")
+    _seed_memory()
+    page = client.get("/").text
+    assert "Память помощника" in page and "Облако Плюс" in page and "ждём до 12.12" in page
+    assert "Что аватар спросит на встрече" in page and "что мешает подписать договор" in page
+
+
+def test_index_memory_search(client):
+    _seed_memory()
+    page = client.get("/", params={"q": "облака"}).text
+    assert "Договор на подписи у юристов" in page and "m022" in page
+    assert "ничего нет" in client.get("/", params={"q": "Марс"}).text
+
+
+def test_index_escapes_memory(client):
+    from datetime import datetime
+    from pomoshnik.memory import Fact
+    from yadro.clock import TZ_EKB
+    srv.stand.memory.add([Fact("<script>x</script>", "сделка", "<b>что</b>", "кто",
+                               datetime(2026, 12, 8, tzinfo=TZ_EKB), "m1", "цитата из письма")])
+    page = client.get("/").text
+    assert "<script>x</script>" not in page and "&lt;script&gt;" in page

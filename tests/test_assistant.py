@@ -260,3 +260,19 @@ def test_meeting_brief_old_revisor_questions_drop_off(am, monkeypatch):
     asst.process_inbox()
     monkeypatch.setenv("DEMO_DATE", "2026-12-25")
     assert asst.meeting_brief()[1] == []
+
+
+# ---------------- ревизор переживает перезапуск ----------------
+def test_reviser_reports_survive_restart(am, monkeypatch):
+    asst, clock, llm = am
+    monkeypatch.setenv("DEMO_DATE", "2026-12-11")
+    asst.process_inbox()
+    n = len(asst.reports)
+    assert n >= 15
+    again = Assistant(asst.p, llm, FakePult(), FakeMail([]), asst.j, asst.protocols,
+                      calendar_path=TASK / "calendar.ics", tasks_path=TASK / "tasks.csv", memory=asst.memory)
+    assert len(again.reports) == n
+    assert {r.id for r in again.reports} == {r.id for r in asst.reports}
+    assert again.review_reports() == 0                     # тот же день — повторно не спрашивает
+    monkeypatch.setenv("DEMO_DATE", "2026-12-12")
+    assert again.review_reports() > 0                      # новый день — видит отчёты, разобранные до перезапуска

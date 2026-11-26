@@ -55,6 +55,41 @@ def md_to_html(md: str) -> str:
     return "\n".join(out)
 
 
+REPORT_CATEGORIES = ("отчёт", "статус")
+
+
+def work_day(clock) -> date:
+    """Рабочий день помощника. DEMO_DATE в .env сдвигает его на даты учебного календаря заказчика."""
+    demo = os.environ.get("DEMO_DATE")
+    return date.fromisoformat(demo) if demo else clock.now().date()
+
+
+def reports_from_journal(journal: Journal) -> list[Report]:
+    out = []
+    for a in journal.actions():
+        r = (a["payload"] or {}).get("report") if a["kind"].startswith("mail_") else None
+        if r:
+            out.append(Report(r["id"], r["from_name"], r["from_email"], datetime.fromisoformat(r["received"]),
+                              r["subject"], r["body"]))
+    return out
+
+
+def meeting_brief(journal: Journal, memory, today: date, days: int = 7) -> tuple[str, list[str]]:
+    """Для аватара: вся история из памяти и открытые вопросы ревизора за последние `days` дней.
+
+    Берётся из баз, а не из памяти процесса, поэтому переживает перезапуск стенда."""
+    history = brief(memory) if memory is not None else ""
+    latest: dict[tuple, str] = {}
+    for a in journal.actions():
+        pl = a["payload"] or {}
+        if a["kind"] != "report_review" or not pl.get("to") or not pl.get("question"):
+            continue
+        age = (today - date.fromisoformat(pl["day"])).days
+        if 0 <= age <= days:
+            latest[(pl.get("kind"), pl.get("topic"))] = f"{pl.get('to_name')} — {pl.get('topic')}: {pl['question']}"
+    return history, list(latest.values())
+
+
 class Assistant:
     def __init__(self, profile: Profile, llm, pult, mailbox, journal: Journal, protocols: ProtocolStore, *,
                  calendar_path: str | Path, tasks_path: str | Path, outbox_mailbox=None, memory=None):
@@ -68,16 +103,14 @@ class Assistant:
         self.decisions: list[dict] = []      # письма, которые ждут руководителя
         self.digest: list[str] = []
         self.risks: list[str] = []           # риски для целей руководителя от ревизора
-        self.reports: list[Report] = []      # отчёты и статусы команды для ревизора
+        self.reports: list[Report] = reports_from_journal(journal)   # отчёты и статусы команды для ревизора
 
     @property
     def clock(self):
         return self.j.clock
 
     def today(self) -> date:
-        """Рабочий день помощника. DEMO_DATE в .env сдвигает его на даты учебного календаря заказчика."""
-        demo = os.environ.get("DEMO_DATE")
-        return date.fromisoformat(demo) if demo else self.clock.now().date()
+        return work_day(self.clock)
 
     def _log(self, kind: str, *, actor="assistant", path=None, summary="", payload=None, event_id=None):
         self.j.log_action(kind, actor=actor, path=path, summary=summary, payload=payload or {}, event_id=event_id)
@@ -92,13 +125,15 @@ class Assistant:
                 continue
             cat, summ, conf = classify(self.llm, e.subject, e.body, e.from_name)
             d = decide(self.p, cat, e.from_email, summary=summ or e.subject, confidence=conf)
-            self._act(e, d, eid)
-            counts[d.action] = counts.get(d.action, 0) + 1
             rec = getattr(e, "received", None) or self.clock.now()
+            report = Report(e.id, e.from_name, e.from_email, rec, e.subject, e.body) \
+                if d.category in REPORT_CATEGORIES else None
+            self._act(e, d, eid, report)
+            counts[d.action] = counts.get(d.action, 0) + 1
             if d.category not in MEMORY_SKIP:
                 self.remember(e.body, source=e.id, who=e.from_name, when=rec, title=e.subject, event_id=eid)
-            if d.category in ("отчёт", "статус"):
-                self.reports.append(Report(e.id, e.from_name, e.from_email, rec, e.subject, e.body))
+            if report:
+                self.reports.append(report)
         if letters:
             self._log("inbox_done", summary=json.dumps(counts, ensure_ascii=False), payload=counts)
             counts["ревизор"] = self.review_reports()
@@ -133,20 +168,7 @@ class Assistant:
         return "\n".join(lines)
 
     def meeting_brief(self, days: int = 7) -> tuple[str, list[str]]:
-        """Для аватара: вся история из памяти и открытые вопросы ревизора за последние `days` дней.
-
-        Берётся из баз, а не из памяти процесса, поэтому переживает перезапуск стенда."""
-        history = brief(self.memory) if self.memory is not None else ""
-        today = self.today()
-        latest: dict[tuple, str] = {}
-        for a in self.j.actions():
-            pl = a["payload"] or {}
-            if a["kind"] != "report_review" or not pl.get("to") or not pl.get("question"):
-                continue
-            age = (today - date.fromisoformat(pl["day"])).days
-            if 0 <= age <= days:
-                latest[(pl.get("kind"), pl.get("topic"))] = f"{pl.get('to_name')} — {pl.get('topic')}: {pl['question']}"
-        return history, list(latest.values())
+        return meeting_brief(self.j, self.memory, self.today(), days)
 
     def review_reports(self) -> int:
         """Ревизор отчётов: вопросы исполнителям — сам, руководителю — одна строка. Один вопрос по теме в сутки."""
@@ -171,10 +193,14 @@ class Assistant:
             n += 1
         return n
 
-    def _act(self, e, d: Decision, eid: int):
+    def _act(self, e, d: Decision, eid: int, report: Report | None = None):
         path = "decision" if d.action == "спросить_руководителя" else "now"
-        self._log(f"mail_{d.action}", path=path, event_id=eid, summary=f"{e.subject} — {d.reason}",
-                  payload={"category": d.category, "delegate_to": d.delegate_to, "minutes_saved": MINUTES_SAVED[d.action]})
+        payload = {"category": d.category, "delegate_to": d.delegate_to, "minutes_saved": MINUTES_SAVED[d.action]}
+        if report:      # отчёт хранится в журнале, чтобы ревизор видел его и после перезапуска
+            payload["report"] = {"id": report.id, "from_name": report.from_name, "from_email": report.from_email,
+                                 "received": report.received.isoformat(), "subject": report.subject,
+                                 "body": report.body}
+        self._log(f"mail_{d.action}", path=path, event_id=eid, summary=f"{e.subject} — {d.reason}", payload=payload)
         if d.action == "спросить_руководителя":
             self.decisions.append({"event_id": eid, "from": e.from_name, "subject": e.subject,
                                    "summary": d.summary, "reason": d.reason, "email": e.from_email, "id": e.id})
