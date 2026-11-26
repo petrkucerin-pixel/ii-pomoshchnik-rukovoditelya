@@ -44,6 +44,19 @@ def test_static_files_served(client):
         assert client.get(f"/static/cabinet/{name}").status_code == 200
 
 
+def test_uses_blue_glass_theme_before_own_css():
+    page = read("index.html")
+    assert "/static/theme/theme.css" in page and page.index("theme.css") < page.index("cabinet.css")
+    for cls in ("t-nav", "t-hero", "t-card"):
+        assert cls in page + read("cabinet.js"), cls
+    assert "hero.svg" in page + read("cabinet.js")
+
+
+def test_theme_is_complete(client):
+    for path in ("theme.css", "preview.html", "img/hero.svg", "img/logo.svg", "fonts/montserrat-cyrillic-600.woff2"):
+        assert client.get(f"/static/theme/{path}").status_code == 200, path
+
+
 def test_js_uses_every_endpoint():
     js = read("cabinet.js")
     missing = [e for e in ENDPOINTS if e not in js]

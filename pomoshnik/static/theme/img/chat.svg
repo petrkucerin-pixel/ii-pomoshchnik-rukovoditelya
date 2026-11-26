@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 140" aria-hidden="true">
+  <defs>
+    <radialGradient id="c" cx="35%" cy="30%" r="85%"><stop offset="0" stop-color="#ffd2c6"/><stop offset=".5" stop-color="#f39a84"/><stop offset="1" stop-color="#d4604a"/></radialGradient>
+    <radialGradient id="g" cx="35%" cy="30%" r="85%"><stop offset="0" stop-color="#fff"/><stop offset=".6" stop-color="#e6eefb"/><stop offset="1" stop-color="#b9cdf0"/></radialGradient>
+    <filter id="s" x="-30%" y="-30%" width="160%" height="170%"><feGaussianBlur in="SourceAlpha" stdDeviation="5"/><feOffset dy="7"/><feComponentTransfer><feFuncA type="linear" slope=".25"/></feComponentTransfer><feFlood flood-color="#2a4f96"/><feComposite operator="in" in2="SourceAlpha"/><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <g filter="url(#s)">
+    <path d="M66 28 h58 a22 22 0 0 1 22 22 v18 a22 22 0 0 1 -22 22 h-6 v18 l-20 -18 h-32 a22 22 0 0 1 -22 -22 v-18 a22 22 0 0 1 22 -22z" fill="url(#c)"/>
+    <path d="M58 40 q12 -8 30 -8" stroke="#fff" stroke-width="5" stroke-linecap="round" fill="none" opacity=".55"/>
+  </g>
+  <g filter="url(#s)">
+    <path d="M30 62 h50 a18 18 0 0 1 18 18 v14 a18 18 0 0 1 -18 18 h-28 l-16 14 v-14 h-6 a18 18 0 0 1 -18 -18 v-14 a18 18 0 0 1 18 -18z" fill="url(#g)"/>
+    <circle cx="40" cy="88" r="5.5" fill="#f08a73"/><circle cx="56" cy="88" r="5.5" fill="#f08a73"/><circle cx="72" cy="88" r="5.5" fill="#f08a73"/>
+  </g>
+</svg>

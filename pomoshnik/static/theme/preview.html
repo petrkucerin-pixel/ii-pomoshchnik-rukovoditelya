@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Образец главной — ИИ-помощник руководителя</title>
+<link rel="icon" href="img/logo.svg">
+<link rel="stylesheet" href="theme.css">
+</head>
+<body>
+<!-- Образец главной страницы «Сегодня» для TASK_08_GPT. Данные статичные — из tests/fixtures/cabinet/today.json.
+     Кабинет повторяет эту раскладку и классы t-*, а данные берёт из GET /api/today. -->
+<div class="t-page">
+
+  <nav class="t-nav" aria-label="Разделы кабинета">
+    <span class="t-brand"><img src="img/logo.svg" alt="">ИИ-помощник</span>
+    <a href="#today" aria-current="page">Сегодня</a>
+    <a href="#mail">Переписка</a>
+    <a href="#meetings">Совещания</a>
+    <a href="#memory">Память</a>
+    <a href="#profile">Профиль</a>
+    <span class="t-spacer"></span>
+    <span class="t-chip t-chip--ok">● бот на связи</span>
+  </nav>
+
+  <section class="t-hero" aria-labelledby="hello">
+    <div class="t-hero-text">
+      <div class="t-kicker">ИИ-помощник руководителя · пятница, 11 декабря</div>
+      <h1 id="hello" style="margin-top:10px">Доброе утро, Иван&nbsp;Петров</h1>
+      <div class="t-rule"></div>
+      <div class="t-kicker">5 встреч · 3 решения ждут только вас</div>
+      <div class="t-kicker">Разобрано 82 письма, 45&nbsp;% — без вашего участия</div>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:22px">
+        <a class="t-btn t-btn--coral" href="#decisions">Решения · 3</a>
+        <a class="t-btn t-btn--ghost" href="#meetings">Неделя встреч</a>
+      </div>
+    </div>
+    <img class="t-hero-art" src="img/hero.svg" alt="">
+  </section>
+
+  <div class="t-metrics" style="margin:18px 0">
+    <div class="t-card t-metric"><div class="v">3,55 ч</div><div class="k">освобождено за неделю</div></div>
+    <div class="t-card t-metric"><div class="v">45 %</div><div class="k">писем без руководителя</div></div>
+    <div class="t-card t-metric"><div class="v">0,1 мин</div><div class="k">от конца встречи до протокола</div></div>
+    <div class="t-card t-metric"><div class="v">$0,06</div><div class="k">расходы на модель</div></div>
+  </div>
+
+  <div class="t-grid">
+    <section class="t-card t-span-7" id="decisions" aria-labelledby="dec-h">
+      <img class="t-illus" src="img/mail.svg" alt="">
+      <header><h2 id="dec-h">Ждут только вас</h2><span class="t-note">деньги, кадры, клиенты, руководство</span></header>
+      <ol class="t-steps">
+        <li>
+          <span class="t-num">01</span>
+          <span class="t-row-title">Клиент «Ромашка-Ритейл»: сроки запуска интеграции</span>
+          <span class="t-chip t-chip--coral">клиенту</span>
+          <span class="t-row-sub">Просит подтвердить запуск до 25 декабря. Почему к вам: обязательства клиентам — только с вашим подтверждением.</span>
+          <span class="t-row-actions"><button class="t-btn t-btn--small">Согласовать</button><button class="t-btn t-btn--small t-btn--ghost">Отказать</button><button class="t-btn t-btn--small t-btn--ghost">Позже</button></span>
+        </li>
+        <li>
+          <span class="t-num">02</span>
+          <span class="t-row-title">Ольга Смирнова: скидка 12 % для «Ромашка-Ритейл»</span>
+          <span class="t-chip t-chip--coral">деньги</span>
+          <span class="t-row-sub">Годовой контракт 4,8 млн ₽, маржа остаётся 18 %. Почему к вам: скидки — только с вашим подтверждением.</span>
+          <span class="t-row-actions"><button class="t-btn t-btn--small">Согласовать</button><button class="t-btn t-btn--small t-btn--ghost">Отказать</button><button class="t-btn t-btn--small t-btn--ghost">Позже</button></span>
+        </li>
+        <li>
+          <span class="t-num">03</span>
+          <span class="t-row-title">Виктор Орлов: итоги встречи с партнёром</span>
+          <span class="t-chip">руководство</span>
+          <span class="t-row-sub">Просит коротко, в двух строках, как прошла встреча с «Облако Плюс».</span>
+          <span class="t-row-actions"><button class="t-btn t-btn--small">Ответить</button><button class="t-btn t-btn--small t-btn--ghost">Позже</button></span>
+        </li>
+      </ol>
+    </section>
+
+    <section class="t-card t-span-5" aria-labelledby="day-h">
+      <img class="t-illus" src="img/calendar.svg" alt="">
+      <header><h2 id="day-h">Встречи сегодня</h2><a class="t-note" href="#meetings">вся неделя →</a></header>
+      <ul class="t-timeline">
+        <li><span class="t-time">09:30</span><span><span class="t-cat" data-cat="операционная"></span>Планёрка отдела <span class="t-note">· 8 участников</span></span></li>
+        <li><span class="t-time">11:00</span><span><span class="t-focus">Окно для фокуса до 13:00</span></span></li>
+        <li><span class="t-time">13:00</span><span><span class="t-cat" data-cat="клиент"></span>«ТехноСтрой»: КП на 50 лицензий</span></li>
+        <li><span class="t-time">15:00</span><span><span class="t-cat" data-cat="один_на_один"></span>1:1 с Ольгой Смирновой <span class="t-note">· сводка готова</span></span></li>
+        <li><span class="t-time">17:00</span><span><span class="t-cat" data-cat="руководство"></span>Итоги недели с Виктором Орловым</span></li>
+      </ul>
+      <div style="margin-top:12px"><a class="t-btn t-btn--small" href="#meetings">Аватар на планёрку</a></div>
+    </section>
+
+    <section class="t-card t-card--coral t-span-5" aria-labelledby="risk-h">
+      <header><h2 id="risk-h">Риски для ваших целей</h2><span class="t-chip t-chip--coral">ревизор</span></header>
+      <ol class="t-steps">
+        <li><span class="t-num">01</span><span class="t-row-title">План продаж SMB: прогноз 94 %</span><span></span>
+          <span class="t-row-sub">Ольга Смирнова и Алексей Новиков сходятся. Помощник спросил у Ольги, какие две сделки под риском.</span></li>
+        <li><span class="t-num">02</span><span class="t-row-title">«Облако Плюс»: статус не меняется 4 дня</span><span></span>
+          <span class="t-row-sub">7 одинаковых отчётов Сергея Морозова. Срок задачи 01.12 уже прошёл, в отчёте — 12.12.</span></li>
+      </ol>
+    </section>
+
+    <section class="t-card t-span-7" aria-labelledby="tasks-h">
+      <header><h2 id="tasks-h">Задачи и сроки</h2><span class="t-note">просрочено 2 · ближайшие 3</span></header>
+      <div class="t-scroll">
+        <table class="t-table">
+          <thead><tr><th>Задача</th><th>Кто</th><th>Срок</th><th>Статус</th></tr></thead>
+          <tbody>
+            <tr><td>Подписать договор с «Облако Плюс»</td><td>Сергей Морозов</td><td>01.12</td><td><span class="t-chip t-chip--coral">просрочена</span></td></tr>
+            <tr><td>Отчёт по e-com за ноябрь</td><td>Анна Волкова</td><td>17.12</td><td><span class="t-chip">новая</span></td></tr>
+            <tr><td>Подготовить КП для «ТехноСтрой»</td><td>Ольга Смирнова</td><td>24.12</td><td><span class="t-chip">в работе</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <a class="t-card t-span-4" href="#mail" style="text-decoration:none;color:inherit;min-height:150px">
+      <img class="t-illus" src="img/mail.svg" alt="">
+      <div class="t-num">01</div><div class="t-kicker">Переписка</div>
+      <p class="t-small t-muted" style="max-width:70%">Контрагенты, отделы, рассылки, спам. Шаблоны писем — правка и обсуждение с помощником.</p>
+    </a>
+    <a class="t-card t-span-4" href="#meetings" style="text-decoration:none;color:inherit;min-height:150px">
+      <img class="t-illus" src="img/chat.svg" alt="">
+      <div class="t-num">02</div><div class="t-kicker">Совещания</div>
+      <p class="t-small t-muted" style="max-width:70%">Календарь недели, аватар на встрече, протоколы на утверждение, задачи.</p>
+    </a>
+    <a class="t-card t-span-4" href="#memory" style="text-decoration:none;color:inherit;min-height:150px">
+      <img class="t-illus" src="img/memory.svg" alt="">
+      <div class="t-num">03</div><div class="t-kicker">Память и обучение</div>
+      <p class="t-small t-muted" style="max-width:70%">75 фактов с цитатами. Что известно по теме, ваши правки.</p>
+    </a>
+  </div>
+
+  <p class="t-footer">Учебные данные заказчика: компания, люди и суммы вымышленные. Помощник представляется ИИ-помощником.</p>
+</div>
+</body>
+</html>

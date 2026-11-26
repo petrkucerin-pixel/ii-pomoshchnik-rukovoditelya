@@ -14,7 +14,7 @@
 - `pomoshnik/static/cabinet/cabinet.css`.
 - По желанию — `tools/cabinet_mock.py`: локальный сервер на примерах из `tests/fixtures/cabinet/`, чтобы работать до готовности API. Свои тесты — в `tests/test_cabinet_ui_extra.py`.
 
-**Не трогать:** `pomoshnik/*.py`, `yadro/`, `data/`, `profiles/`, `tests/test_cabinet_ui_contract.py` и `tests/test_cabinet_api.py` (контракты), `tests/fixtures/cabinet/` (примеры ответов), любые `*.md`, кроме этого TASK.
+**Не трогать:** `pomoshnik/*.py`, `pomoshnik/static/theme/` (оформление), `yadro/`, `data/`, `profiles/`, `tests/test_cabinet_ui_contract.py` и `tests/test_cabinet_api.py` (контракты), `tests/fixtures/cabinet/` (примеры ответов), любые `*.md`, кроме этого TASK.
 
 Сервер уже отдаёт `GET /` → `pomoshnik/static/cabinet/index.html` (если файл есть) и `/static/...` → папку `pomoshnik/static/`. Старая страница остаётся по адресу `/classic`.
 
@@ -75,7 +75,15 @@
 node --check pomoshnik/static/cabinet/cabinet.js
 ```
 
-Глазами: ширина 375 px и 1280 px. На 375 px нет горизонтальной прокрутки страницы, кнопки не ниже 44 px, календарь в виде «День». Облик — светлые карточки, как у текущей страницы (`/classic`): фон `#f4f6f8`, карточки белые со скруглением 12 px, акцент `#245c73`.
+Глазами: ширина 375 px и 1280 px. На 375 px нет горизонтальной прокрутки страницы, кнопки не ниже 44 px, календарь в виде «День».
+
+## Облик «Голубое стекло» (решение Пита 26.11)
+
+Оформление готово, его делал Claude: `pomoshnik/static/theme/` — **не менять**, только подключать.
+- `index.html` подключает `<link rel="stylesheet" href="/static/theme/theme.css">` **до** `cabinet.css`. В `cabinet.css` — только раскладка разделов и календаря, цвета и шрифты берите из переменных `theme.css` (`--ink`, `--coral`, `--glass`, `--line`…).
+- **Образец главной** — `/static/theme/preview.html`. Раздел «Сегодня» повторяет его: приветствие с иллюстрацией `hero.svg`, четыре метрики, «Ждут только вас» нумерованным списком `01/02` с кнопками, «Встречи сегодня» лентой с окнами для фокуса, «Риски», «Задачи и сроки», карточки-переходы в разделы.
+- Классы: навигация `t-nav` (на телефоне сама становится нижней панелью), `t-hero`, `t-card` (+ `t-illus` для иллюстрации в углу), `t-metrics`/`t-metric`, `t-steps`, `t-timeline`, `t-table`, `t-tabs`/`t-tab`, `t-btn` (`--coral`, `--ghost`, `--small`), `t-chip`, `t-input`/`t-textarea`, `t-quote` (цитата из источника), `t-cat[data-cat]` (цвет категории встречи), `t-focus` (окно для фокуса).
+- Иллюстрации разделов: `img/mail.svg` — Переписка, `img/calendar.svg` и `img/chat.svg` — Совещания, `img/memory.svg` — Память, `img/chart.svg` — Профиль и метрики, `img/logo.svg` — знак помощника. Встречи в календаре — стеклянные блоки с цветной полосой категории слева.
 
 ## Вне объёма
 

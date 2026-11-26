@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 400" role="img" aria-label="Письмо, календарь и разговор — работа помощника">
+  <defs>
+    <radialGradient id="coral" cx="35%" cy="30%" r="80%">
+      <stop offset="0" stop-color="#ffd2c6"/><stop offset=".45" stop-color="#f6a28d"/><stop offset="1" stop-color="#dc6650"/>
+    </radialGradient>
+    <radialGradient id="coral2" cx="30%" cy="25%" r="85%">
+      <stop offset="0" stop-color="#ffc9bb"/><stop offset=".5" stop-color="#f29079"/><stop offset="1" stop-color="#cf5a45"/>
+    </radialGradient>
+    <linearGradient id="paper" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#e8eefa"/>
+    </linearGradient>
+    <radialGradient id="glass" cx="35%" cy="30%" r="80%">
+      <stop offset="0" stop-color="#ffffff" stop-opacity=".95"/><stop offset=".6" stop-color="#e6eefb" stop-opacity=".85"/>
+      <stop offset="1" stop-color="#b9cdf0" stop-opacity=".9"/>
+    </radialGradient>
+    <linearGradient id="vein" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#9fbcec"/>
+    </linearGradient>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="160%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="10"/><feOffset dy="14"/>
+      <feComponentTransfer><feFuncA type="linear" slope=".28"/></feComponentTransfer>
+      <feFlood flood-color="#2a4f96"/><feComposite operator="in" in2="SourceAlpha"/>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- связи-«прожилки» между объектами -->
+  <g fill="none" stroke="url(#vein)" stroke-width="5" stroke-linecap="round" opacity=".95">
+    <path d="M196 214 C 236 196, 250 168, 282 150"/>
+    <path d="M232 256 C 276 262, 300 270, 330 282"/>
+    <path d="M282 150 C 300 128, 318 120, 340 118"/>
+  </g>
+  <g fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" opacity=".9">
+    <path d="M250 188 C 262 200, 266 214, 262 228"/>
+    <path d="M300 268 C 308 252, 320 246, 334 246"/>
+    <path d="M320 121 C 326 104, 340 96, 352 96"/>
+  </g>
+  <g fill="#ffffff"><circle cx="340" cy="118" r="6"/><circle cx="352" cy="96" r="4"/><circle cx="262" cy="228" r="4.5"/><circle cx="334" cy="246" r="4"/></g>
+
+  <!-- календарь -->
+  <g filter="url(#soft)" transform="rotate(8 330 140)">
+    <rect x="262" y="52" width="150" height="150" rx="26" fill="url(#paper)"/>
+    <path d="M262 92 V78 a26 26 0 0 1 26-26 h98 a26 26 0 0 1 26 26 v14 z" fill="url(#coral)"/>
+    <rect x="296" y="38" width="12" height="32" rx="6" fill="#b9cdf0"/><rect x="366" y="38" width="12" height="32" rx="6" fill="#b9cdf0"/>
+    <g fill="#c9d8f2">
+      <rect x="282" y="108" width="22" height="18" rx="5"/><rect x="314" y="108" width="22" height="18" rx="5"/>
+      <rect x="346" y="108" width="22" height="18" rx="5"/><rect x="378" y="108" width="18" height="18" rx="5"/>
+      <rect x="282" y="136" width="22" height="18" rx="5"/><rect x="346" y="136" width="22" height="18" rx="5"/>
+      <rect x="378" y="136" width="18" height="18" rx="5"/><rect x="282" y="164" width="22" height="18" rx="5"/>
+      <rect x="314" y="164" width="22" height="18" rx="5"/>
+    </g>
+    <rect x="314" y="136" width="22" height="18" rx="5" fill="#f08a73"/>
+    <path d="M272 62 q20 -6 44 -4" stroke="#fff" stroke-width="5" stroke-linecap="round" fill="none" opacity=".6"/>
+  </g>
+
+  <!-- письмо -->
+  <g filter="url(#soft)" transform="rotate(-7 150 250)">
+    <rect x="46" y="176" width="230" height="160" rx="24" fill="url(#coral2)"/>
+    <rect x="70" y="150" width="182" height="120" rx="12" fill="url(#paper)"/>
+    <g stroke="#b9cdf0" stroke-width="6" stroke-linecap="round">
+      <path d="M92 178 h110"/><path d="M92 198 h138"/><path d="M92 218 h90"/>
+    </g>
+    <path d="M46 206 L161 282 L276 206 V312 a24 24 0 0 1 -24 24 H70 a24 24 0 0 1 -24 -24 z" fill="url(#coral)"/>
+    <path d="M58 326 L140 264 M264 326 L182 264" stroke="#c95541" stroke-width="3" stroke-linecap="round" opacity=".45"/>
+    <path d="M70 222 q30 18 52 32" stroke="#fff" stroke-width="7" stroke-linecap="round" fill="none" opacity=".55"/>
+    <circle cx="232" cy="300" r="9" fill="#fff" opacity=".55"/>
+  </g>
+
+  <!-- разговор -->
+  <g filter="url(#soft)">
+    <path d="M318 246 h108 a30 30 0 0 1 30 30 v34 a30 30 0 0 1 -30 30 h-52 l-26 24 v-24 h-30 a30 30 0 0 1 -30 -30 v-34 a30 30 0 0 1 30 -30 z" fill="url(#glass)"/>
+    <circle cx="344" cy="293" r="10" fill="url(#coral)"/><circle cx="372" cy="293" r="10" fill="url(#coral)"/><circle cx="400" cy="293" r="10" fill="url(#coral)"/>
+    <path d="M300 262 q18 -10 44 -10" stroke="#fff" stroke-width="5" stroke-linecap="round" fill="none"/>
+  </g>
+</svg>
