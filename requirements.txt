@@ -33,3 +33,4 @@ tzdata==2026.6
 uvicorn==0.54.0
 playwright==1.48.0
 faster-whisper==1.2.1
+av==19.0.2

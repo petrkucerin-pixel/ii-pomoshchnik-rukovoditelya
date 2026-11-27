@@ -28,8 +28,24 @@ class LocalWhisper:
 
     def __call__(self, audio: bytes) -> str:
         with self._lock:
-            segments, _ = self._load().transcribe(io.BytesIO(audio), language="ru", beam_size=1, vad_filter=True)
+            segments, _ = self._load().transcribe(decode(audio), language="ru", beam_size=1, vad_filter=True)
             return " ".join(s.text.strip() for s in segments).strip()
+
+
+def decode(audio: bytes, rate: int = 16000):
+    """OGG/Opus, WAV и др. → моно 16 кГц float32. Свой разбор: faster-whisper 1.2 зовёт av.open с параметром,
+    которого нет в av 19 (проверено на стенде 27.11), а сборки старого av для сервера нет."""
+    import av
+    import numpy as np
+    chunks = []
+    with av.open(io.BytesIO(audio), mode="r") as c:
+        resampler = av.AudioResampler(format="s16", layout="mono", rate=rate)
+        for frame in c.decode(audio=0):
+            chunks += [f.to_ndarray() for f in resampler.resample(frame)]
+        chunks += [f.to_ndarray() for f in resampler.resample(None)]
+    if not chunks:
+        return np.zeros(0, dtype=np.float32)
+    return np.concatenate(chunks, axis=1).flatten().astype(np.float32) / 32768.0
 
 
 def available() -> bool:
