@@ -204,14 +204,22 @@ function draftField(label, area, text) {
 // Два черновика: «Согласовать» отправляет первый, «Отказать» — второй. Оба можно поправить.
 function preparedBlock(p, drafts) {
   if (!p) return el("p", "reason decision-wait", "Готовлю черновики ответа и факты…");
-  const facts = el("ul", "decision-facts", p.facts.map(f => {
-    const li = el("li", "", el("span", "decision-kind", f.kind), f.text, f.note ? el("span", "decision-note", " — " + f.note) : null);
+  // Пункт: что это значит для решения, мелко — откуда (задача, встреча, память) дословно.
+  const list = items => el("ul", "decision-facts", items.map(f => {
+    const li = el("li", "", f.note || f.text, el("span", "decision-note", " · " + f.kind + ": " + f.text));
     li.title = f.source_text;
     return li;
   }));
-  const advice = p.advice === "нет совета" ? el("p", "decision-advice decision-advice--none", "Совета нет: мало фактов, решаете вы.")
+  const blockers = p.blockers || [];
+  const advice = p.advice === "нет совета"
+    ? el("p", "decision-advice decision-advice--none", "Совета нет — решаете вы.")
     : el("p", "decision-advice", el("strong", "", "Совет: " + p.advice), p.why ? " — " + p.why : "");
-  return el("div", "decision-prep", advice, p.facts.length ? facts : null,
+  return el("div", "decision-prep",
+    p.ask ? el("p", "decision-ask", el("strong", "", "Запрос: "), p.ask) : null,
+    el("p", "decision-label", "Что мешает"),
+    blockers.length ? list(blockers) : el("p", "decision-advice--none", "В задачах, календаре и памяти препятствий не нашёл."),
+    p.facts.length ? el("p", "decision-label", "За") : null, p.facts.length ? list(p.facts) : null,
+    advice,
     draftField("«Согласовать» отправит", drafts.yes, p.draft_yes || p.draft),
     draftField("«Отказать» отправит", drafts.no, p.draft_no),
     p.unverified && p.unverified.length ? el("p", "decision-warn", "Проверьте цифры: " + p.unverified.join(", ")) : null);

@@ -375,3 +375,5 @@ select { width: 100%; min-height: 44px; padding: 9px 12px; border-radius: var(--
 .decision-draft textarea { color: var(--text, #20313c); font-size: .95rem; }
 .decision-warn { margin: 0; color: var(--coral-ink); font-size: .87rem; }
 .decision-wait { font-style: italic; }
+.decision-ask { margin: 0; overflow-wrap: anywhere; }
+.decision-label { margin: 4px 0 0; font-size: .8rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }

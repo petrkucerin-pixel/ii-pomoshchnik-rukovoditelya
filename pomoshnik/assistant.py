@@ -498,9 +498,15 @@ class Assistant:
                  f"<i>Почему к вам: {e(x['reason'])}</i>"]
         p = x["prepared"]
         if p:
-            if p["advice"] != "нет совета":
-                lines.append(f"\n<b>Совет: {e(p['advice'])}</b> — {e(p['why'])}")
-            lines += [f"• {e(f['text'])} <i>({e(f['kind'])})</i>" for f in p["facts"][:4]]
+            if p.get("ask"):
+                lines.append(f"\n<b>Запрос:</b> {e(p['ask'])}")
+            bl = p.get("blockers") or []
+            lines.append("<b>Что мешает:</b> " + ("" if bl else "в задачах, календаре и памяти препятствий не нашёл"))
+            lines += [f"• {e(f['note'] or f['text'])} <i>({e(f['text'])})</i>" for f in bl]
+            if p["facts"]:
+                lines.append("<b>За:</b>")
+                lines += [f"• {e(f['note'] or f['text'])} <i>({e(f['text'])})</i>" for f in p["facts"][:4]]
+            lines.append(f"<b>Совет: {e(p['advice'])}</b>" + (f" — {e(p['why'])}" if p["why"] else ""))
             for key, label in (("draft_yes", "Если согласуете"), ("draft_no", "Если откажете")):
                 if p.get(key):
                     lines.append(f"\n<b>{label}, уйдёт:</b>\n{e(p[key])}")

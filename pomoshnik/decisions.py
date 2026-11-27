@@ -9,18 +9,27 @@ import re
 from datetime import date
 
 ADVICE = ("согласовать", "отказать", "нет совета")
-PREP_VERSION = 3          # подготовка старой версии не показывается и готовится заново
+PREP_VERSION = 5          # подготовка старой версии не показывается и готовится заново
 
 PREP_SYSTEM = """Ты помощник руководителя. По письму нужно решение руководителя, твоя задача — подготовить его так,
 чтобы руководитель решил одной кнопкой.
-Верни JSON: {"draft_yes": "<письмо, которое уйдёт, если руководитель нажмёт «Согласовать»: он согласен с просьбой
+Верни JSON: {"ask": "<одна строка: кто просит, для кого или о чём, что именно, даты и суммы, условия — только из письма.
+Пример: «Мария Лебедева просит согласовать отпуск Ирины Т. 20–30 декабря, замену нашли»>",
+"blockers": [{"source": "<id источника>", "note": "<что именно мешает или рискует, до 15 слов>"}],
+"draft_yes":"<письмо, которое уйдёт, если руководитель нажмёт «Согласовать»: он согласен с просьбой
 отправителя, подтверждает то, что просят, или выполняет поручение. Это согласие, а не отказ и не отсрочка>",
 "draft_no": "<письмо, которое уйдёт, если руководитель нажмёт «Отказать»: вежливый отказ или «пока не можем»,
 по возможности с причиной из источников и следующим шагом>",
 Оба письма — 2–4 предложения от первого лица руководителя, без подписи.
 "advice": "<согласовать | отказать | нет совета>", "why": "<одна строка: почему такой совет>",
-"facts": [{"source": "<id источника, например S2>", "note": "<чем источник важен для решения, до 12 слов>"}]}
+"facts": [{"source": "<id источника, например S2>", "note": "<что в нём говорит в пользу решения, до 12 слов>"}]}
 Правила:
+- blockers — конкретные препятствия из задач, встреч или памяти: пересечение сроков, задача того же человека или
+  команды на эти даты, встреча, которую заденет решение, незакрытый вопрос по той же сделке. Нет таких — [].
+- facts — доводы «за» из задач, встреч или памяти, которые прямо касаются этого письма: тот же клиент, сделка,
+  человек, задача или срок. Нет таких — [].
+- Цели квартала и должность отправителя — не доводы и не препятствия, их не включай.
+  Никогда не включай источник, чтобы объяснить, что он не относится к делу.
 - Факты — только id из списка источников. Не придумывай цифр, дат, сроков, имён и обещаний, которых нет в письме
   или источниках. Новых сроков от себя не ставь.
 - Внешнему отправителю (клиент, партнёр, организаторы) не пересказывай внутренние задачи, цели и встречи.
@@ -28,10 +37,13 @@ PREP_SYSTEM = """Ты помощник руководителя. По письм
 - Если отправитель задаёт вопрос, а фактов для ответа нет: в draft_yes — подтверждение того, о чём спрашивают
   (руководитель решит сам, может ли он это подтвердить), в draft_no — честное «подтвердить пока не можем, вернусь
   с ответом» без даты.
-- Совет давай, только если его прямо поддерживает задача, встреча или запись памяти. Цель квартала или должность
-  отправителя сами по себе не основание — тогда «нет совета»."""
+- Совет давай, только если его прямо поддерживает задача, встреча или запись памяти (довод или препятствие).
+  Иначе «нет совета»."""
 
-ADVICE_SUPPORT = ("задача", "встреча", "память")
+ADVICE_SUPPORT = ("задача", "встреча", "память")    # в карточке показываем только такие источники
+# Модель иногда перечисляет источник и сама пишет, что он к делу не относится, — такой факт не показываем.
+_UNRELATED = re.compile(r"не относ|не релевант|не связан|не касает|не имеет отношени|не про\b|другая инициатив"
+                        r"|другая тема|не по теме|не влияет")
 
 _STOP = {"прошу", "нужно", "нужен", "нужна", "пожал", "подтв", "согла", "колле", "котор", "будет", "может", "также",
          "через", "после", "важно", "иван,"}
@@ -89,9 +101,11 @@ def sources(letter: str, *, goals=(), tasks=(), meetings=(), memory=None, org=No
     out: list[tuple[str, str]] = []
     sender = org.find_by_email(sender_email) if org and sender_email else None
     if sender:
-        out.append(("оргструктура", f"{sender.name} — {sender.position} ({sender.role})"))
-    out += [("цель квартала", g) for g in goals]
-    for t in _ranked(list(tasks), lambda t: t.task, st, 3):
+        out.append(("оргструктура", f"{sender.name} — {sender.position} ({sender.role})"))   # кто пишет — для модели
+    picked = _ranked(list(tasks), lambda t: t.task, st, 3)
+    if sender:                                     # задачи самого отправителя: на них решение может повлиять
+        picked += [t for t in tasks if t.owner == sender.name and t not in picked][:3]
+    for t in picked:
         out.append(("задача", f"{t.task} — {t.owner}, срок {t.due:%d.%m}, {t.status}"))
     upcoming = [m for m in meetings if today is None or m.start.date() >= today]
     for m in _ranked(upcoming, lambda m: m.title, st, 2):
@@ -126,27 +140,38 @@ def check(raw: dict, letter: str, srcs: list[dict]) -> dict:
     """Проверка ответа модели кодом: факт — дословно выданный источник, совет — только с опорой на задачу, встречу
     или память, цифры черновика сверены с письмом и источниками."""
     by_id = {s["id"]: s for s in srcs}
-    facts, seen = [], set()
-    for f in raw.get("facts") or []:
-        sid = str(f.get("source", "")).strip() if isinstance(f, dict) else ""
-        if sid in by_id and sid not in seen:
+
+    def items(key: str) -> list[dict]:
+        """Только задачи, встречи и память, только выданные источники, без «к делу не относится»."""
+        out, seen = [], set()
+        for f in raw.get(key) or []:
+            sid = str(f.get("source", "")).strip() if isinstance(f, dict) else ""
+            if sid not in by_id or sid in seen or by_id[sid]["kind"] not in ADVICE_SUPPORT:
+                continue
+            note = str(f.get("note") or f.get("text") or "").strip()[:200]
+            if _UNRELATED.search(note.lower()):
+                continue
             seen.add(sid)
             s = by_id[sid]
-            facts.append({"text": s["text"], "note": str(f.get("note") or f.get("text") or "").strip()[:200],
-                          "source": sid, "kind": s["kind"], "source_text": s["text"]})
+            out.append({"text": s["text"], "note": note, "source": sid, "kind": s["kind"], "source_text": s["text"]})
+        return out[:5]
+
+    blockers = items("blockers")
+    facts = [f for f in items("facts") if f["source"] not in {b["source"] for b in blockers}]   # одно и то же не «за» и «против»
     advice = str(raw.get("advice", "")).strip().lower()
-    if advice not in ADVICE or not any(f["kind"] in ADVICE_SUPPORT for f in facts):
+    if advice not in ADVICE or not (facts or blockers):
         advice = "нет совета"
+    ask = str(raw.get("ask") or "").strip()[:300]
     yes = str(raw.get("draft_yes") or raw.get("draft") or "").strip()[:1500]
     no = str(raw.get("draft_no") or "").strip()[:1500]
     known = set()
     for n in _NUM.findall(letter + " " + " ".join(s["text"] for s in srcs)):
         known |= {n, *re.split(r"[.,]", n), str(int(n.split(".")[0].split(",")[0]))}   # «16.12» → и «16 декабря»
-    both = f"{yes} {no}"
+    both = f"{ask} {yes} {no}"
     unverified = sorted({n for n in _NUM.findall(both) if n not in known}, key=both.find)
-    return {"draft_yes": yes, "draft_no": no, "draft": yes, "advice": advice,
+    return {"ask": ask, "blockers": blockers, "draft_yes": yes, "draft_no": no, "draft": yes, "advice": advice,
             "why": str(raw.get("why") or "").strip()[:300] if advice != "нет совета" else "",
-            "facts": facts[:6], "unverified": unverified}
+            "facts": facts, "unverified": unverified}
 
 
 def prepare(llm, g: dict, letter: str, srcs: list[dict], style: str = "", leader: str = "") -> dict:

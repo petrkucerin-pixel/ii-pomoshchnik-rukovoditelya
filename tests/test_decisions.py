@@ -226,7 +226,7 @@ def test_prepare_card_checks_sources(a):
     assert asst.prepare_decisions() == len(asst.groups())
     p = grp(asst, THESES)["prepared"]
     assert p["draft"].startswith("Добрый день")
-    assert [f["kind"] for f in p["facts"]] == ["задача", "оргструктура"]    # факт без источника выброшен
+    assert [f["kind"] for f in p["facts"]] == ["задача"]    # без источника и «кто пишет» — не довод, выброшены
     task = p["facts"][0]
     assert task["text"] == task["source_text"] and task["text"].startswith("Тезисы к совету директоров")  # дословно
     assert task["note"] == "задача в работе"
@@ -360,3 +360,34 @@ def test_telegram_shows_both_drafts(tmp_path):
     asst.handle(Update(1, "callback", 555, "dec:next", 10, "cb"))
     text = asst.pult.sent[-1][1]
     assert "Если согласуете" in text and "Если откажете" in text and "не можем" in text
+
+
+# ---------------- в карточке только относящиеся к делу факты ----------------
+def test_unrelated_facts_are_dropped(tmp_path):
+    from pomoshnik.decisions import check
+    srcs = [{"id": "S1", "kind": "цель квартала", "text": "Выполнить план продаж SMB."},
+            {"id": "S2", "kind": "задача", "text": "Запустить кампанию января — Дмитрий Козлов"},
+            {"id": "S3", "kind": "память", "text": "Интеграция Ромашки идёт по плану"}]
+    raw = {"draft_yes": "Да.", "draft_no": "Нет.", "advice": "согласовать", "why": "есть статус",
+           "facts": [{"source": "S1", "note": "цель по продажам, к срокам интеграции не относится"},
+                     {"source": "S2", "note": "внутренняя кампания, к запросу клиента не относится"},
+                     {"source": "S3", "note": "статус интеграции", "relevant": True}]}
+    p = check(raw, "Сроки запуска интеграции", srcs)
+    assert [f["source"] for f in p["facts"]] == ["S3"] and p["advice"] == "согласовать"
+    raw["facts"] = raw["facts"][:2]
+    assert check(raw, "x", srcs)["facts"] == [] and check(raw, "x", srcs)["advice"] == "нет совета"
+
+
+def test_card_has_ask_and_blockers_only_from_tasks_meetings_memory():
+    from pomoshnik.decisions import check
+    srcs = [{"id": "S1", "kind": "оргструктура", "text": "Мария Лебедева — Руководитель клиентского сервиса"},
+            {"id": "S2", "kind": "задача", "text": "Регламент ответа поддержки 4 часа — Мария Лебедева, срок 23.12"}]
+    raw = {"ask": "Мария Лебедева просит отпуск Ирины Т. 20–30 декабря, замену нашли",
+           "blockers": [{"source": "S2", "note": "срок регламента 23.12 попадает на отпуск"},
+                        {"source": "S1", "note": "подчинённая"}, {"source": "S7", "note": "выдумка"}],
+           "facts": [{"source": "S1", "note": "в компетенции руководителя"}],
+           "draft_yes": "Согласую.", "draft_no": "Пока нет.", "advice": "отказать", "why": "регламент"}
+    p = check(raw, "Отпуск сотрудника сервиса 20–30 декабря\nПрошу согласовать отпуск Ирины Т., замену нашли.", srcs)
+    assert p["ask"].startswith("Мария Лебедева просит отпуск")
+    assert [b["source"] for b in p["blockers"]] == ["S2"] and p["facts"] == []
+    assert p["advice"] == "отказать" and p["unverified"] == []          # 23.12 есть в источнике, 20–30 — в письме
