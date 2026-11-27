@@ -501,8 +501,9 @@ class Assistant:
             if p["advice"] != "нет совета":
                 lines.append(f"\n<b>Совет: {e(p['advice'])}</b> — {e(p['why'])}")
             lines += [f"• {e(f['text'])} <i>({e(f['kind'])})</i>" for f in p["facts"][:4]]
-            if p["draft"]:
-                lines.append(f"\n<b>Ответ, если согласуете:</b>\n{e(p['draft'])}")
+            for key, label in (("draft_yes", "Если согласуете"), ("draft_no", "Если откажете")):
+                if p.get(key):
+                    lines.append(f"\n<b>{label}, уйдёт:</b>\n{e(p[key])}")
             if p["unverified"]:
                 lines.append(f"⚠️ Проверьте цифры: {e(', '.join(p['unverified']))}")
         eid = x["event_id"]
@@ -513,7 +514,8 @@ class Assistant:
     def decide_letter(self, eid: int, verdict: str, *, notify: bool = True, text: str | None = None) -> bool:
         """Решение руководителя по вопросу: из Telegram или из кабинета. Закрывает все копии письма одним ответом.
 
-        «Согласовать» отправляет подготовленный черновик или текст руководителя. False — такого письма в очереди нет."""
+        «Согласовать» и «Отказать» отправляют свой подготовленный черновик или текст руководителя.
+        False — такого письма в очереди нет."""
         if verdict not in ("yes", "no", "later"):
             raise ValueError(verdict)
         g = next((x for x in self.groups() if eid in x["event_ids"]), None)
@@ -525,8 +527,9 @@ class Assistant:
         if verdict == "later":
             self.decisions.extend(letters)
         else:
-            draft = (g["prepared"] or {}).get("draft", "")
-            body = (text or "").strip() or (draft if verdict == "yes" else "")
+            p = g["prepared"] or {}
+            draft = p.get("draft_yes", p.get("draft", "")) if verdict == "yes" else p.get("draft_no", "")
+            body = (text or "").strip() or draft
             if body:
                 self._reply(g, body)
                 if text and text.strip() != draft:

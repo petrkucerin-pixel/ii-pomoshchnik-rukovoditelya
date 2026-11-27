@@ -320,3 +320,43 @@ def test_old_prepared_cards_are_redone(a):
     asst.j.log_action("decision_prepared", payload={**asst.prepared[key], "v": 1})   # подготовка старой версии
     b = again(asst, tmp_path)
     assert b.groups()[0]["prepared"]["v"] >= 2
+
+
+# ---------------- два черновика: на «да» и на «нет» ----------------
+def two_drafts(user):
+    return {"draft_yes": "Подтверждаю запуск до 25 декабря.", "draft_no": "Подтвердить 25 декабря не можем, вернёмся с датой.",
+            "advice": "нет совета", "why": "", "facts": [{"source": source_id(user, "оргструктура") or "S1"}]}
+
+
+def test_each_button_sends_its_own_draft(tmp_path):
+    rows = [r for r in ROWS if r["subject"] == "Сроки запуска интеграции"]
+    llm = StubLLM(lambda s, u: two_drafts(u) if s == PREP_SYSTEM else answer(s, u))
+    asst, mail = make(tmp_path, IVAN, rows=rows, llm=llm)
+    asst.process_inbox()
+    asst.prepare_decisions()
+    p = asst.groups()[0]["prepared"]
+    assert p["draft_yes"].startswith("Подтверждаю") and p["draft_no"].startswith("Подтвердить 25 декабря не можем")
+    asst.decide_letter(asst.groups()[0]["event_id"], "no", notify=False)
+    assert "не можем" in mail.out[-1]["body"] and "Подтверждаю" not in mail.out[-1]["body"]
+    assert not any(x["kind"] == "decision_draft_edit" for x in asst.j.actions())
+
+
+def test_no_with_own_text_is_an_edit_and_old_single_draft_still_works(a):
+    asst, mail, _ = a
+    asst.prepare_decisions()                                           # заглушка отдаёт старый «draft» — это ответ на «да»
+    g = grp(asst, THESES)
+    assert g["prepared"]["draft_yes"] == g["prepared"]["draft"] and g["prepared"]["draft_no"] == ""
+    asst.decide_letter(g["event_id"], "no", notify=False, text="Не успею к 15.12, давайте к 18.12.")
+    assert "к 18.12" in mail.out[-1]["body"]
+    assert any(x["kind"] == "decision_draft_edit" for x in asst.j.actions())
+
+
+def test_telegram_shows_both_drafts(tmp_path):
+    rows = [r for r in ROWS if r["subject"] == "Сроки запуска интеграции"][:1]
+    llm = StubLLM(lambda s, u: two_drafts(u) if s == PREP_SYSTEM else answer(s, u))
+    asst, _ = make(tmp_path, IVAN, rows=rows, llm=llm)
+    asst.process_inbox()
+    asst.prepare_decisions()
+    asst.handle(Update(1, "callback", 555, "dec:next", 10, "cb"))
+    text = asst.pult.sent[-1][1]
+    assert "Если согласуете" in text and "Если откажете" in text and "не можем" in text

@@ -194,8 +194,16 @@ function openMeeting(m) {
 }
 
 // Готовое решение помощника (TASK_12): совет, факты дословно из источников, черновик ответа, который можно поправить.
-function preparedBlock(p, draft) {
-  if (!p) return el("p", "reason decision-wait", "Готовлю черновик ответа и факты…");
+function draftField(label, area, text) {
+  area.value = text || "";
+  area.rows = 3;
+  area.setAttribute("aria-label", label);
+  return text ? el("label", "decision-draft", el("span", "", label), area) : null;
+}
+
+// Два черновика: «Согласовать» отправляет первый, «Отказать» — второй. Оба можно поправить.
+function preparedBlock(p, drafts) {
+  if (!p) return el("p", "reason decision-wait", "Готовлю черновики ответа и факты…");
   const facts = el("ul", "decision-facts", p.facts.map(f => {
     const li = el("li", "", el("span", "decision-kind", f.kind), f.text, f.note ? el("span", "decision-note", " — " + f.note) : null);
     li.title = f.source_text;
@@ -203,24 +211,23 @@ function preparedBlock(p, draft) {
   }));
   const advice = p.advice === "нет совета" ? el("p", "decision-advice decision-advice--none", "Совета нет: мало фактов, решаете вы.")
     : el("p", "decision-advice", el("strong", "", "Совет: " + p.advice), p.why ? " — " + p.why : "");
-  draft.value = p.draft || "";
-  draft.rows = 4;
-  draft.setAttribute("aria-label", "Ответ, если согласуете");
   return el("div", "decision-prep", advice, p.facts.length ? facts : null,
-    p.draft ? el("label", "decision-draft", el("span", "", "Ответ, если согласуете"), draft) : null,
+    draftField("«Согласовать» отправит", drafts.yes, p.draft_yes || p.draft),
+    draftField("«Отказать» отправит", drafts.no, p.draft_no),
     p.unverified && p.unverified.length ? el("p", "decision-warn", "Проверьте цифры: " + p.unverified.join(", ")) : null);
 }
 
 function decisionItem(d, refresh) {
   const actions = el("div", "actions");
   const error = feedback();
-  const draft = el("textarea");
+  const drafts = {yes: el("textarea"), no: el("textarea")};
   for (const [verdict, label, style] of [
     ["yes", "Согласовать", "primary"], ["no", "Отказать", ""], ["later", "Позже", "quiet"]
   ]) {
     actions.append(button(label, () => submitAction(actions, error, async () => {
       const body = {verdict};
-      if (verdict === "yes" && d.prepared && draft.value.trim()) body.text = draft.value;
+      const area = drafts[verdict];
+      if (area && d.prepared && area.value.trim()) body.text = area.value;
       await api("/api/decisions/" + encodeURIComponent(d.event_id), "POST", body);
       announce(verdict === "later" ? "Отложено" : "Решение принято");
       refresh();
@@ -229,7 +236,7 @@ function decisionItem(d, refresh) {
   const times = d.count > 1 ? el("span", "decision-times", "пишут " + d.count + "-й раз") : null;
   return el("div", "decision", meta(d.from, stamp(d.at), ...(times ? [times] : [])), el("h3", "", d.subject),
     d.summary === d.subject ? null : el("p", "", d.summary), el("p", "reason", d.reason),
-    preparedBlock(d.prepared, draft), actions, error);
+    preparedBlock(d.prepared, drafts), actions, error);
 }
 
 function todayPage(host) {
