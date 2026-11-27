@@ -289,8 +289,15 @@ def test_telegram_card_shows_count_advice_and_draft(a):
     asst.handle(Update(1, "callback", 555, "dec:next", 10, "cb"))
     kind, text, buttons = asst.pult.sent[-1]
     g = asst.groups()[0]
-    assert f"пишут {g['count']}-й раз" in text and "Совет: согласовать" in text and "Тезисы пришлю" in text
-    assert buttons[0] == f"dec:yes:{g['event_id']}"
+    assert g["count"] > 2 and f"пишут {g['count']}-й раз" in text and "Совет: согласовать" in text
+    assert "Тезисы пришлю" in text                                     # черновик по совету — «согласовать»
+    assert buttons == [f"dec:yes:{g['event_id']}", f"dec:no:{g['event_id']}", f"dec:more:{g['event_id']}",
+                       f"dec:later:{g['event_id']}"]
+    assert "Что мешает" not in text and "За:" not in text and len(text) < 900   # короткая карточка
+    asst.handle(Update(1, "callback", 555, f"dec:more:{g['event_id']}", 10, "cb"))
+    more = asst.pult.sent[-1][1]
+    assert "Что мешает" in more and "Тезисы к совету директоров" in more            # подробности по кнопке
+    assert asst.groups()[0]["event_id"] == g["event_id"]                            # «Подробнее» ничего не решает
 
 
 # ---------------- факты из памяти: без самого письма и без повторов ----------------
@@ -359,7 +366,10 @@ def test_telegram_shows_both_drafts(tmp_path):
     asst.prepare_decisions()
     asst.handle(Update(1, "callback", 555, "dec:next", 10, "cb"))
     text = asst.pult.sent[-1][1]
-    assert "Если согласуете" in text and "Если откажете" in text and "не можем" in text
+    assert "Если согласуете" in text and "Если откажете" not in text            # совета нет — черновик «да»
+    assert "пишут" not in text                                                  # одно письмо: счётчик не нужен
+    asst.handle(Update(1, "callback", 555, f"dec:more:{asst.groups()[0]['event_id']}", 10, "cb"))
+    assert "Если откажете" in asst.pult.sent[-1][1] and "не можем" in asst.pult.sent[-1][1]
 
 
 # ---------------- в карточке только относящиеся к делу факты ----------------

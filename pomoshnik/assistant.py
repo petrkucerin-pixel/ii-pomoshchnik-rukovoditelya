@@ -589,28 +589,48 @@ class Assistant:
             self.pult.send_text("Решений, которые ждут вас, больше нет.")
             return
         x, e = gs[0], html.escape
-        lines = [f"<b>{e(x['from'])}</b>: {e(x['subject'])}{self._times(x)}", e(x["summary"]),
-                 f"<i>Почему к вам: {e(x['reason'])}</i>"]
+        times = f" · пишут {x['count']}-й раз" if x["count"] > 2 else ""
+        lines = [f"<b>{e(x['from'])}</b> · {e(x['subject'])}{times}"]
         p = x["prepared"]
-        if p:
-            if p.get("ask"):
-                lines.append(f"\n<b>Запрос:</b> {e(p['ask'])}")
+        if not p:
+            lines += [e(x["summary"]), f"<i>{e(x['reason'])}. Готовлю черновик ответа…</i>"]
+        else:
+            lines.append(e(p.get("ask") or x["summary"]))
             bl = p.get("blockers") or []
-            lines.append("<b>Что мешает:</b> " + ("" if bl else "в задачах, календаре и памяти препятствий не нашёл"))
-            lines += [f"• {e(f['note'] or f['text'])} <i>({e(f['text'])})</i>" for f in bl]
-            if p["facts"]:
-                lines.append("<b>За:</b>")
-                lines += [f"• {e(f['note'] or f['text'])} <i>({e(f['text'])})</i>" for f in p["facts"][:4]]
-            lines.append(f"<b>Совет: {e(p['advice'])}</b>" + (f" — {e(p['why'])}" if p["why"] else ""))
-            for key, label in (("draft_yes", "Если согласуете"), ("draft_no", "Если откажете")):
-                if p.get(key):
-                    lines.append(f"\n<b>{label}, уйдёт:</b>\n{e(p[key])}")
+            if bl:
+                lines.append(f"⚠️ {e(bl[0]['note'] or bl[0]['text'])}" + (f" (и ещё {len(bl) - 1})" if len(bl) > 1 else ""))
+            lines.append(f"\n<b>Совет: {e(p['advice'])}</b>" + (f" — {e(p['why'])}" if p["why"] else "")
+                         if p["advice"] != "нет совета" else "\nСовета нет — решаете вы.")
+            no = p["advice"] == "отказать"
+            draft = p.get("draft_no") if no else p.get("draft_yes", p.get("draft"))
+            if draft:
+                lines.append(f"\n<b>{'Если откажете' if no else 'Если согласуете'}, уйдёт:</b>\n{e(draft)}")
             if p["unverified"]:
-                lines.append(f"⚠️ Числа нет ни в письме, ни в базе — проверьте: {e(', '.join(p['unverified']))}")
+                lines.append(f"⚠️ Проверьте числа: {e(', '.join(p['unverified']))}")
         eid = x["event_id"]
         self.pult.send_buttons("\n".join(lines),
                                [[Button("Согласовать", f"dec:yes:{eid}"), Button("Отказать", f"dec:no:{eid}")],
-                                [Button("Позже", f"dec:later:{eid}")]])
+                                [Button("Подробнее", f"dec:more:{eid}"), Button("Позже", f"dec:later:{eid}")]])
+
+    def _decision_details(self, eid: int):
+        """«Подробнее» к карточке: почему к вам, что мешает, доводы и оба черновика. Ничего не решает."""
+        x = next((g for g in self.groups() if eid in g["event_ids"]), None)
+        if not x:
+            self.pult.send_text("Этот вопрос уже решён.")
+            return
+        e, p = html.escape, x["prepared"] or {}
+        lines = [f"<b>{e(x['subject'])}</b> — подробно", f"<i>Почему к вам: {e(x['reason'])}</i>"]
+        bl = p.get("blockers") or []
+        lines.append("\n<b>Что мешает:</b>" + ("" if bl else " в задачах, календаре и памяти препятствий не нашёл"))
+        lines += [f"• {e(f['note'] or f['text'])} <i>({e(f['text'])})</i>" for f in bl]
+        if p.get("facts"):
+            lines.append("<b>За:</b>")
+            lines += [f"• {e(f['note'] or f['text'])} <i>({e(f['text'])})</i>" for f in p["facts"][:4]]
+        for key, label in (("draft_yes", "Если согласуете"), ("draft_no", "Если откажете")):
+            if p.get(key):
+                lines.append(f"\n<b>{label}, уйдёт:</b>\n{e(p[key])}")
+        self.pult.send_buttons("\n".join(lines),
+                               [[Button("Согласовать", f"dec:yes:{eid}"), Button("Отказать", f"dec:no:{eid}")]])
 
     def decide_letter(self, eid: int, verdict: str, *, notify: bool = True, text: str | None = None) -> bool:
         """Решение руководителя по вопросу: из Telegram или из кабинета. Закрывает все копии письма одним ответом.
@@ -813,6 +833,8 @@ class Assistant:
             elif parts[0] == "dec":
                 if parts[1] == "next":
                     self._next_decision()
+                elif parts[1] == "more":
+                    self._decision_details(int(parts[2]))
                 else:
                     self._decide_letter(parts[1], int(parts[2]))
             return
