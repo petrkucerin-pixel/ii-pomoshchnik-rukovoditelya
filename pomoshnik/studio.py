@@ -128,8 +128,8 @@ class Autopilot:
         minutes = int((m.end - m.start).total_seconds() // 60) + TAIL_MIN
         link = self._link(a, m.uid)
         if link:                       # у встречи есть комната Телемоста — туда идёт робот с аватаром
-            if self.robot.running:
-                return                 # робот ещё на прошлой встрече — попробуем на следующем шаге
+            if self.robot.is_running(m.uid) or not self.robot.has_room():
+                return                 # роботы заняты на других встречах — попробуем на следующем шаге
             a.pult.send_text(f"Через минуту «{m.title}» ({m.start:%H:%M}). Аватар заходит в Телемост сам: {link}")
             self.robot.start(link=link, title=m.title, uid=m.uid, minutes=minutes)
             a.j.log_action("avatar_auto_ready", path="now", summary=f"{m.title} {m.start:%H:%M}: робот ушёл в Телемост",
@@ -149,7 +149,7 @@ class Autopilot:
 
     def _finish(self, a: Assistant, m, r: dict, now: datetime) -> None:
         if r.get("robot"):             # протокол собирает робот — ждём его отчёт
-            if self.robot.running and self.robot.meta.get("uid") == m.uid:
+            if self.robot.is_running(m.uid):
                 return
             rd = [x["payload"] for x in a.j.actions() if x["kind"] == "robot_done" and x["payload"].get("uid") == m.uid]
             pid = rd[-1].get("protocol_id") if rd else None

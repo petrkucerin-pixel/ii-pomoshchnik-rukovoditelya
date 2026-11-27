@@ -625,11 +625,11 @@ function telemostBlock(m, refresh) {
     status.textContent = "Аватару нужна комната: создайте её в Телемосте и вставьте ссылку — он зайдёт сам.";
     return box;
   }
-  api("/api/robot").then(r => {
-    const here = r.state === "running" && r.meeting && r.meeting.uid === m.uid;
+  api("/api/robot?" + new URLSearchParams({uid: m.uid})).then(r => {
+    const here = r.state === "running";
     if (here) {
       status.textContent = "Аватар сейчас на встрече: " + r.status + ". Подключитесь, чтобы послушать или перехватить разговор.";
-      actions.append(button("Остановить аватара", async () => { await api("/api/robot/stop", "POST"); announce("Аватар выходит из встречи"); refresh(); }, "quiet"));
+      actions.append(button("Остановить аватара", async () => { await api("/api/robot/stop?" + new URLSearchParams({uid: m.uid}), "POST"); announce("Аватар выходит из встречи"); refresh(); }, "quiet"));
     } else {
       status.textContent = "Аватар зайдёт в Телемост сам в " + time(m.avatar_at) + ". Вы можете подключиться: просто слушать или вступить в разговор — аватар слышит всех.";
       actions.append(button("Запустить аватара сейчас", () => submitAction(box, error, async () => {
@@ -761,8 +761,36 @@ function meetingView(host, uid) {
       el("h3", "", "Вопросы по прошлому протоколу"), bullets(d.previous_questions, "Вопросов нет."),
       el("h3", "", "Вопросы из истории"), bullets(d.history_questions, "Вопросов нет."),
       el("h3", "", "Задачи участников"), rows(d.tasks, taskRow, "Открытых задач нет."));
-    mount.replaceChildren(backLink(), el("div", "dashboard", stack(head, protocol), stack(telemost, prep)));
+    const live = el("div");
+    mount.replaceChildren(backLink(), live, el("div", "dashboard", stack(head, protocol), stack(telemost, prep)));
+    liveProtocol(live, m.uid);
   });
+}
+
+// Протокол по ходу встречи: пока аватар на встрече — живая расшифровка с именами и черновик договорённостей.
+function liveProtocol(host, uid) {
+  let timer = null;
+  async function tick() {
+    if (!host.isConnected) { clearInterval(timer); return; }
+    let r;
+    try { r = await api("/api/robot?" + new URLSearchParams({uid})); } catch (e) { return; }
+    if (r.state !== "running") { host.replaceChildren(); return; }
+    const lv = r.live || {}, pr = lv.protocol;
+    const lines = (lv.transcript || []).filter(x => !/^\d\d:\d\d:\d\d$/.test(x));
+    const talk = el("div", "live-talk", ...(lines.length ? lines.slice(-12).map(x => el("p", "", x)) : [hint("Пока тихо.")]));
+    const draft = pr ? stack(
+      el("h3", "", "Договорённости"), bullets(pr.decisions, "Пока нет."),
+      el("h3", "", "Задачи"), rows(pr.tasks, t => el("div", "row", el("strong", "", t.what),
+        hint(t.owner + " · до " + dateLabel(t.due) + (t.default_due ? " (срок не назван)" : ""))), "Пока нет."),
+      el("h3", "", "Открытые вопросы"), bullets(pr.open_questions, "Пока нет."),
+      hint("Черновик обновлён " + time(lv.updated_at) + ". Итоговый протокол придёт в Telegram после встречи.")) :
+      hint("Черновик договорённостей появится через пару минут разговора.");
+    host.replaceChildren(card("Встреча идёт · протокол по ходу", "file",
+      meta(r.status, r.participants.length ? "Участники: " + r.participants.join(", ") : null),
+      el("div", "dashboard live", stack(el("h3", "", "Кто что говорит"), talk), draft)));
+  }
+  tick();
+  timer = setInterval(tick, 15000);
 }
 
 function protocolsView(host) {

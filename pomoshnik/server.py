@@ -471,8 +471,9 @@ def api_meeting_lead(uid: str, body: LeadIn):
 
 
 @app.get("/api/robot")
-def api_robot():
-    return stand.robot.status()
+def api_robot(uid: str | None = None):
+    """Все роботы (до ROBOT_MAX встреч одновременно) или робот одной встречи — с расшифровкой и черновиком протокола."""
+    return stand.robot.status(uid)
 
 
 @app.post("/api/robot/start")
@@ -488,8 +489,8 @@ def api_robot_start(body: RobotIn):
 
 
 @app.post("/api/robot/stop")
-def api_robot_stop():
-    return {"ok": stand.robot.stop()}
+def api_robot_stop(uid: str | None = None):
+    return {"ok": stand.robot.stop(uid)}
 
 
 # ---------------- студия и экран аватара (TASK_09) ----------------

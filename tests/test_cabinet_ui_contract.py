@@ -104,3 +104,8 @@ def test_meetings_calendar_alone_meeting_page_and_new_meeting_by_slot():
     assert "Новая встреча" in js and "/api/people" in js and 'addEventListener("click"' in js   # клик по слоту
     assert "/api/telemost" in js and "Создать комнату в Телемосте" in js and "/api/telemost/conference" in js  # комната Телемоста
     assert "Веду сам" in js and "Ведёт мой ИИ-аватар" in js and "Подключиться к встрече" in js            # кто ведёт встречу
+
+
+def test_live_protocol_during_meeting_and_robot_per_meeting():
+    js = read("cabinet.js")
+    assert "протокол по ходу" in js and "/api/robot?" in js and "/api/robot/stop?" in js

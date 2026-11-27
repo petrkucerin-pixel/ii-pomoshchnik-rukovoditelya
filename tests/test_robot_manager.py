@@ -133,14 +133,80 @@ def test_no_talk_no_protocol(env):
     assert done["protocol_id"] is None and "никто не пришёл" in a.pult.sent[-1][1] and a.protocols.ids() == []
 
 
-def test_only_one_robot_and_link_checked(env):
+def test_link_checked(env):
     a, clock, llm, tmp = env
     rm = manager(a, FakeLA(), fake_runner(), tmp)
     with pytest.raises(ValueError):
         rm.start(link="http://evil.example/x", title="x")
-    rm.running = True
-    with pytest.raises(RuntimeError):
-        rm.start(link=LINK, title="x")
+
+
+def blocking_runner():
+    """Робот «сидит» на встрече, пока его не остановят; по ходу копит реплики."""
+    import asyncio as aio
+
+    async def run(link, *, name, token, until, st, shots_dir=None, headless=True):
+        st.people.update({"p1": "Пит"})
+        if callable(token):
+            token([n for n in st.people.values()])
+        st.started = st.session_at = 1000.0
+        st.status = "аватар во встрече"
+        st.transcript = [{"role": "avatar", "text": "Начнём?", "t": 2000.0},
+                         {"role": "user", "text": "Это Иван Петров. Анна отправит отчёт 12-го декабря.", "t": 6000.0}]
+        st.vad_events = [(5500.0, "p1", True), (9000.0, "p1", False)]
+        while not st.stop:
+            await aio.sleep(0.02)
+        st.end_reason = "остановлен"
+        return st.transcript
+    return run
+
+
+def wait_until(cond, timeout=5.0):
+    import time as t
+    end = t.time() + timeout
+    while t.time() < end:
+        if cond():
+            return True
+        t.sleep(0.02)
+    return False
+
+
+def test_several_meetings_at_once_up_to_the_limit(env, monkeypatch):
+    a, clock, llm, tmp = env
+    monkeypatch.setenv("ROBOT_MAX", "2")
+    rm = RobotManager(lambda: a, lambda: FakeLA(), threading.RLock(), avatar_id="x", shots_dir=tmp,
+                      runner=blocking_runner(), threaded=True, transcript_wait_s=0, live=False)
+    rm.start(link=LINK, title="Планёрка", uid="m1")
+    rm.start(link=LINK + "1", title="Встреча с клиентом", uid="m2")
+    assert wait_until(lambda: rm.is_running("m1") and rm.is_running("m2")) and rm.busy() == 2
+    with pytest.raises(RuntimeError, match="уже на этой встрече"):
+        rm.start(link=LINK, title="Планёрка", uid="m1")
+    with pytest.raises(RuntimeError, match="предел"):
+        rm.start(link=LINK + "2", title="Третья", uid="m3")
+    assert rm.stop("m1") and wait_until(lambda: not rm.is_running("m1"))
+    assert rm.is_running("m2")                                         # вторая встреча идёт дальше
+    st = rm.status()
+    assert st["busy"] == 1 and {r["meeting"]["uid"] for r in st["robots"]} == {"m1", "m2"}
+    rm.stop("m2")
+    assert wait_until(lambda: not rm.running)
+
+
+def test_protocol_draft_fills_during_meeting(env):
+    a, clock, llm, tmp = env
+    rm = RobotManager(lambda: a, lambda: FakeLA(), threading.RLock(), avatar_id="x", shots_dir=tmp,
+                      runner=blocking_runner(), threaded=True, transcript_wait_s=0, live=False)
+    rm.start(link=LINK, title="Планёрка направления", uid=UID)
+    assert wait_until(lambda: rm.robots[UID].st.transcript)
+    robot = rm.robots[UID]
+    live = rm.status(UID)["live"]
+    assert "Пит: Это Иван Петров. Анна отправит отчёт 12-го декабря." in live["transcript"]   # кто сказал — уже по ходу
+    assert live["protocol"] is None
+    assert rm.live_tick(robot, force=True)                              # черновик по накопленной расшифровке
+    draft = rm.status(UID)["live"]["protocol"]
+    assert draft["tasks"][0]["owner"] == "Анна Волкова" and draft["tasks"][0]["due"].startswith("2026-12-12")
+    assert not rm.live_tick(robot, force=True)                         # нового ничего не сказали — модель не зовём
+    assert a.protocols.ids() == []                                     # черновик по ходу не создаёт протокол
+    rm.stop(UID)
+    assert wait_until(lambda: not rm.running) and a.protocols.ids()     # итоговый — после встречи
 
 
 def test_links_live_in_journal(env):

@@ -359,3 +359,6 @@ select { width: 100%; min-height: 44px; padding: 9px 12px; border-radius: var(--
 .telemost h3 { margin-top: 0; }
 .join { background: var(--ink); color: #fff; border-color: var(--ink); }
 .join:hover { background: #0e3366; }
+.live-talk { max-height: 360px; overflow: auto; display: grid; gap: 6px; }
+.live-talk p { margin: 0; padding: 6px 10px; border-radius: 10px; background: rgba(255, 255, 255, .55); font-size: .9rem; }
+.dashboard.live { margin-top: 10px; }
