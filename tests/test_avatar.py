@@ -113,6 +113,8 @@ def test_single_participant_means_no_who_answered_questions():
     one = build_context_prompt(leader="Ивана Петрова", title="Планёрка", questions=[], open_tasks=[], style="",
                                participants=["Пит (это Иван Петров)"])
     assert "один человек" in one and "не переспрашивай" in one
+    # живая проверка 27.11: на старте была одна Ольга, потом вошёл Алексей — аватар благодарил «Ольгу» за его слова
+    assert "присоединиться" in one and "незнакомое имя" in one
     many = build_context_prompt(leader="Ивана Петрова", title="Планёрка", questions=[], open_tasks=[], style="",
                                 participants=["Пит", "Оля С."])
     assert "один человек" not in many and "не больше одного раза подряд" in many
