@@ -394,3 +394,26 @@ select { width: 100%; min-height: 44px; padding: 9px 12px; border-radius: var(--
 .task-move input { width: auto; }
 .task-why { grid-column: 1; font-size: .82rem; }
 .task-why-main { margin: 8px 0 0; color: var(--coral-ink); overflow-wrap: anywhere; }
+
+/* почта как в Outlook: папки, список, область чтения */
+.mail-folders { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.mail-layout { display: grid; grid-template-columns: minmax(260px, .9fr) minmax(0, 1.6fr); gap: 16px; align-items: start; }
+.mail-col { padding: 12px; }
+.mail-col input[type=search] { margin-bottom: 8px; }
+.mail-list { max-height: 70vh; overflow-y: auto; }
+.mail-row { display: grid; gap: 2px; text-align: left; width: 100%; min-width: 0; }
+.mail-row-top { display: flex; justify-content: space-between; gap: 8px; min-width: 0; }
+.mail-row-top strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mail-row-top small { flex: none; color: var(--muted); }
+.mail-row-subject { font-weight: 600; overflow-wrap: anywhere; }
+.mail-row-preview { color: var(--muted); font-size: .85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mail-read { min-width: 0; }
+.mail-read .verbatim { white-space: pre-line; overflow-wrap: anywhere; margin: 12px 0; }
+.mail-read-subject { margin: 4px 0 8px; font-size: 1.15rem; overflow-wrap: anywhere; }
+.mail-thread { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
+.status-chip { display: inline-block; justify-self: start; margin-top: 2px; padding: 1px 8px; border-radius: 999px; font-size: .74rem; font-weight: 600; }
+.status-you { background: rgba(240, 138, 115, .2); color: var(--coral-ink); }
+.status-wait { background: rgba(240, 180, 90, .2); color: #8a5a12; }
+.status-done, .status-assistant { background: rgba(70, 150, 110, .15); color: #23704b; }
+.status-info { background: rgba(120, 140, 160, .14); color: var(--muted); }
+@media (max-width: 760px) { .mail-layout { grid-template-columns: minmax(0, 1fr); } .mail-list { max-height: none; } }

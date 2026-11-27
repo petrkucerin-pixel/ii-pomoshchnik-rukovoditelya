@@ -338,72 +338,86 @@ function todayPage(host, sub = "") {
   refresh();
 }
 
-function letterView(letter) {
-  const addr = (name, email) => [name, email].filter(Boolean).join(" · ");
-  return fold(el("span", "summary-body", el("strong", "", letter.subject), el("small", "", stamp(letter.at))),
-    el("div", "letter", hint("От кого · " + addr(letter.from_name, letter.from_email)),
-      hint("Кому · " + addr(letter.to_name, letter.to_email)), el("p", "verbatim", letter.body),
-      badge(readable(letter.category)), el("h4", "", "Действие помощника"),
-      el("p", "", readable(letter.action)), hint(letter.reason)));
+// Почта как в Outlook (Пит 27.11): папки слева, список писем, область чтения. У письма — метка, как категория
+// в Outlook: что с ним сделал помощник или вы; под письмом — какие ответы по нему ушли.
+const statusChip = st => st ? el("span", "status-chip status-" + st.kind, st.label) : null;
+
+const MAIL_FOLDERS = [["inbox", "Входящие"], ["sent", "Отправленные"], ["newsletter", "Рассылки"],
+  ["spam", "Нежелательная почта"], ["style", "Как я пишу"]];
+
+function folderOf(m) {
+  if (m.direction === "out") return "sent";
+  if (m.group === "spam") return "spam";
+  if (m.group === "newsletter") return "newsletter";
+  return "inbox";
 }
 
-function mailPage(host) {
+function readingPane(m, letters, onBack) {
+  const addr = (name, email) => [name, email].filter(Boolean).join(" · ");
+  const replies = m.direction === "in" ? letters.filter(x => x.direction === "out" && x.reply_to === m.id) : [];
+  const source = m.direction === "out" && m.reply_to ? letters.find(x => x.direction === "in" && x.id === m.reply_to) : null;
+  return el("article", "card t-card mail-read",
+    onBack ? button("← К списку", onBack, "quiet back-link") : null,
+    el("h2", "mail-read-subject", m.subject || "(без темы)"),
+    hint("От: " + addr(m.from_name, m.from_email)), hint("Кому: " + addr(m.to_name, m.to_email)),
+    hint(stamp(m.at)), statusChip(m.status),
+    el("p", "verbatim", m.body),
+    m.reason ? hint("Почему так: " + m.reason) : null,
+    source ? el("div", "mail-thread", el("h3", "", "В ответ на"),
+      el("p", "", el("strong", "", source.from_name + ": "), source.subject)) : null,
+    replies.length ? el("div", "mail-thread", el("h3", "", "Что ушло по этому письму"),
+      ...replies.map(r => el("div", "risk-src", meta("→ " + (r.to_name || r.to_email), stamp(r.at)), statusChip(r.status),
+        el("strong", "", r.subject), el("p", "", r.body)))) : null);
+}
+
+function mailPage(host, folder = "") {
+  if (!MAIL_FOLDERS.some(([k]) => k === folder)) folder = "inbox";
   load(host, async mount => {
-    const {groups, letters} = await api("/api/mail");
-    const titles = Object.fromEntries(groups.map(g => [g.key, g.title]));
-    const tabs = el("div", "tabs");
-    const body = el("div");
-    mount.replaceChildren(tabs, body);
-    let group = "counterparty", direction = "in", party = null;
-    function select(key) {
-      group = key;
-      party = null;
-      render();
+    const {letters} = await api("/api/mail");
+    const folders = el("div", "mail-folders");
+    const search = el("input");
+    search.type = "search";
+    search.placeholder = "Поиск: отправитель или тема";
+    search.setAttribute("aria-label", "Поиск по почте");
+    const list = el("div", "mail-list"), pane = el("div", "mail-pane");
+    let opened = null;
+    const inFolder = f => letters.filter(m => folderOf(m) === f)
+      .sort((a, b) => (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0));
+    folders.replaceChildren(...MAIL_FOLDERS.map(([key, name]) => {
+      const n = key === "style" ? null : inFolder(key).length;
+      return toggle(n === null ? name : name + " · " + n, key === folder, () => mailPage(host, key));
+    }));
+    if (folder === "style") {
+      mount.replaceChildren(folders, pane);
+      stylePage(pane);
+      return;
+    }
+    function open(m) {
+      opened = m.id;
+      list.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.id === m.id)));
+      pane.replaceChildren(readingPane(m, letters, phone.matches ? () => { pane.hidden = true; list.hidden = false; } : null));
+      if (phone.matches) { list.hidden = true; pane.hidden = false; window.scrollTo(0, 0); }
     }
     function render() {
-      const dept = ["team", "internal"].includes(group);
-      const topTabs = [["counterparty", titles.counterparty || "Контрагенты"], ["departments", "Отделы"],
-        ["newsletter", titles.newsletter || "Рассылки"], ["spam", titles.spam || "Спам"], ["style", "Как я пишу"]];
-      tabs.replaceChildren(...topTabs.map(([key, name]) =>
-        toggle(name, key === group || (key === "departments" && dept), () => select(key === "departments" ? "team" : key))));
-      if (group === "style") {
-        stylePage(body);
-        return;
-      }
-      const filters = el("div", "filters");
-      if (dept) filters.append(el("div", "segmented", ["team", "internal"].map(key =>
-        toggle(titles[key]?.split(":").pop().trim() || key, group === key, () => select(key)))));
-      const selected = letters.filter(m => m.group === group);
-      filters.append(el("div", "segmented", [["in", "Входящие"], ["out", "Исходящие"]].map(([key, label]) =>
-        toggle(label + " · " + selected.filter(m => m.direction === key).length, direction === key, () => {
-          direction = key;
-          select(group);
-        }))));
-      const parties = new Map();
-      for (const letter of selected.filter(m => m.direction === direction)) {
-        if (!parties.has(letter.party)) parties.set(letter.party, []);
-        parties.get(letter.party).push(letter);
-      }
-      const contacts = card("Собеседники", "profile");
-      const thread = card("Письма", "mail");
-      function showThread(name, scroll) {
-        party = name;
-        const entries = [...(parties.get(name) || [])].sort((a, b) => (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0));
-        contacts.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.party === name)));
-        thread.replaceChildren(el("h2", "card-heading", icon("mail"), name || "Письма"),
-          rows(entries, letterView, "В этой группе пока нет писем."));
-        if (scroll && phone.matches) thread.scrollIntoView({block: "start"});
-      }
-      for (const [name, entries] of parties) {
-        const pick = button(el("span", "contact", el("span", "", el("strong", "", name), hint(entries[0].party_note)),
-          count(entries)), () => showThread(name, true), "row-link");
-        pick.dataset.party = name;
-        contacts.append(pick);
-      }
-      if (!parties.size) contacts.append(hint("Собеседников пока нет."));
-      body.replaceChildren(filters, el("div", "split", contacts, thread));
-      showThread(party ?? parties.keys().next().value, false);
+      const q = search.value.trim().toLowerCase();
+      const items = inFolder(folder).filter(m => !q ||
+        [m.from_name, m.from_email, m.to_name, m.to_email, m.subject].join(" ").toLowerCase().includes(q));
+      list.replaceChildren(...(items.length ? items.map(m => {
+        const who = m.direction === "out" ? "→ " + (m.to_name || m.to_email) : m.from_name;
+        const b = button(el("span", "mail-row", el("span", "mail-row-top", el("strong", "", who),
+            el("small", "", stamp(m.at))), el("span", "mail-row-subject", m.subject || "(без темы)"),
+          el("span", "mail-row-preview", (m.body || "").split("\n")[0].slice(0, 90)), statusChip(m.status)),
+          () => open(m), "row-link");
+        b.dataset.id = m.id;
+        b.setAttribute("aria-pressed", String(m.id === opened));
+        return b;
+      }) : [hint(q ? "Ничего не найдено." : "В папке пока нет писем.")]));
+      if (!phone.matches && items.length && !items.some(m => m.id === opened)) open(items[0]);
+      if (!items.length) pane.replaceChildren();
     }
+    search.addEventListener("input", render);
+    pane.hidden = phone.matches;
+    mount.replaceChildren(folders, el("div", "mail-layout", el("div", "card t-card mail-col", search, list), pane));
     render();
   });
 }
