@@ -9,6 +9,7 @@ import re
 from datetime import date
 
 ADVICE = ("согласовать", "отказать", "нет совета")
+PREP_VERSION = 2          # подготовка старой версии не показывается и готовится заново
 
 PREP_SYSTEM = """Ты помощник руководителя. По письму нужно решение руководителя, твоя задача — подготовить его так,
 чтобы руководитель решил одной кнопкой.
@@ -75,8 +76,10 @@ def _ranked(items, text_of, stems: set[str], top: int):
 
 
 def sources(letter: str, *, goals=(), tasks=(), meetings=(), memory=None, org=None, sender_email="",
-            today: date | None = None) -> list[dict]:
-    """Источники для решения: цели, задачи, встречи, память помощника и кто такой отправитель. У каждого свой id."""
+            today: date | None = None, exclude=()) -> list[dict]:
+    """Источники для решения: цели, задачи, встречи, память помощника и кто такой отправитель. У каждого свой id.
+
+    `exclude` — письма самого вопроса (все копии): их факты в памяти — это сам вопрос, а не довод."""
     st = _stems(letter)
     out: list[tuple[str, str]] = []
     sender = org.find_by_email(sender_email) if org and sender_email else None
@@ -89,12 +92,14 @@ def sources(letter: str, *, goals=(), tasks=(), meetings=(), memory=None, org=No
     for m in _ranked(upcoming, lambda m: m.title, st, 2):
         out.append(("встреча", f"{m.title} — {m.start:%d.%m %H:%M}"))
     if memory is not None:
-        seen = set()
+        seen, skip = set(), set(exclude)
         for q in _QUOTED.findall(letter) or [letter.split("\n", 1)[0]]:
-            for f in (memory.history(q) or memory.search(q))[-4:]:
-                if (f.source, f.quote) in seen:
+            hits = [f for f in (memory.history(q) or memory.search(q)) if f.source not in skip]
+            for f in hits[-4:]:
+                key = " ".join(re.findall(r"\w+", _norm(f.quote)))
+                if key in seen:                  # одна и та же цитата из копий письма — один факт
                     continue
-                seen.add((f.source, f.quote))
+                seen.add(key)
                 out.append(("память", f"{f.when:%d.%m} {f.who} — {f.topic}: {f.what} («{f.quote}», {f.source})"))
     return [{"id": f"S{i}", "kind": k, "text": t} for i, (k, t) in enumerate(out, 1)]
 

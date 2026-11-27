@@ -186,7 +186,8 @@ def protocol_tasks(journal: Journal) -> list[dict]:
 
 
 def prepared_from_journal(journal: Journal) -> dict[str, dict]:
-    return {a["payload"]["key"]: a["payload"] for a in journal.actions() if a["kind"] == "decision_prepared"}
+    return {a["payload"]["key"]: a["payload"] for a in journal.actions()
+            if a["kind"] == "decision_prepared" and (a["payload"].get("v") or 1) >= dq.PREP_VERSION}
 
 
 def letter_ns(journal: Journal, eid: int) -> SimpleNamespace:
@@ -458,9 +459,11 @@ class Assistant:
                 continue
             e = letter_ns(self.j, g["event_ids"][-1])
             letter = f"{e.subject}\n{e.body}"
+            copies = {letter_ns(self.j, eid).id for eid in g["event_ids"]}
             srcs = dq.sources(letter, goals=self.p.goals, tasks=self.tasks, meetings=self.meetings, memory=self.memory,
-                              org=self.p.org, sender_email=e.from_email, today=self.today())
-            p = {**dq.prepare(self.llm, g, letter, srcs, self.p.style, self.p.name), "key": g["key"]}
+                              org=self.p.org, sender_email=e.from_email, today=self.today(), exclude=copies)
+            p = {**dq.prepare(self.llm, g, letter, srcs, self.p.style, self.p.name), "key": g["key"],
+                 "v": dq.PREP_VERSION}
             self.prepared[g["key"]] = p
             self._log("decision_prepared", event_id=g["event_id"], path="now",
                       summary=f"{g['subject']}: совет — {p['advice']}, фактов {len(p['facts'])}", payload=p)

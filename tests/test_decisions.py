@@ -291,3 +291,32 @@ def test_telegram_card_shows_count_advice_and_draft(a):
     g = asst.groups()[0]
     assert f"пишут {g['count']}-й раз" in text and "Совет: согласовать" in text and "Тезисы пришлю" in text
     assert buttons[0] == f"dec:yes:{g['event_id']}"
+
+
+# ---------------- факты из памяти: без самого письма и без повторов ----------------
+def test_memory_facts_skip_the_letter_itself_and_repeats(tmp_path):
+    from pomoshnik.decisions import PREP_VERSION, sources
+    from pomoshnik.memory import Fact, Memory
+    clock = FakeClock(START)
+    mem = Memory(tmp_path / "m.sqlite", clock)
+    at = START
+    copy = "Подтвердите, пожалуйста, что запуск будет до 25 декабря"
+    mem.add([Fact("Ромашка-Ритейл", "клиент", "просит подтвердить запуск", "Клиент", at, src, copy)
+             for src in ("m001", "m023", "m068")])                                   # сам вопрос, три копии
+    other = "Интеграция Ромашки идёт по плану, тестовый стенд готов"
+    mem.add([Fact("Ромашка-Ритейл", "сделка", "интеграция по плану", "Ольга", at, "протокол 3", other),
+             Fact("Ромашка-Ритейл", "сделка", "интеграция по плану", "Ольга", at, "m050", other)])   # повтор цитаты
+    letter = "Сроки запуска интеграции\nКлиент «Ромашка-Ритейл»: " + copy
+    srcs = [s for s in sources(letter, memory=mem, exclude=("m001", "m023", "m068")) if s["kind"] == "память"]
+    assert len(srcs) == 1 and other in srcs[0]["text"]
+    mem.close()
+    assert PREP_VERSION >= 2
+
+
+def test_old_prepared_cards_are_redone(a):
+    asst, _, tmp_path = a
+    asst.prepare_decisions()
+    key = asst.groups()[0]["key"]
+    asst.j.log_action("decision_prepared", payload={**asst.prepared[key], "v": 1})   # подготовка старой версии
+    b = again(asst, tmp_path)
+    assert b.groups()[0]["prepared"]["v"] >= 2
