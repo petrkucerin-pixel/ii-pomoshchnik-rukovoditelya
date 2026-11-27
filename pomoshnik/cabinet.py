@@ -194,15 +194,16 @@ def _risk_next(a: Assistant, text: str, authors: set[str], done: list[dict], tod
     m = re.search(r"(\d+(?:[.,]\d+)?)\s*%", text)
     gap = f"До плана не хватает {100 - float(m.group(1).replace(',', '.')):g} %. " if m and float(m.group(1).replace(",", ".")) < 100 else ""
     who = ", ".join(sorted(authors)) or "исполнителя"
-    meet = next((x for x in a.meetings if x.start.date() >= today and authors & set(x.attendees)), None)
+    now = datetime.combine(today, a.clock.now().timetz())      # учебный день + текущее время: прошедшие встречи не берём
+    meet = next((x for x in a.meetings if x.start >= now and authors & set(x.attendees)), None)
     if done:
         asked = ", ".join(sorted({d["to_name"].split()[0] for d in done}))
-        now = f"Сейчас от вас ничего не нужно: помощник уже запросил подробности ({asked}) и ответы пришлёт в сводку."
+        msg = f"Сейчас от вас ничего не нужно: помощник уже запросил подробности ({asked}) и ответы пришлёт в сводку."
     else:
-        now = f"Помощник исполнителям не писал — спросите {who} сами."
-    then = (f"Если к встрече ответа нет или прогноз не растёт — обсудите с {who} на «{meet.title}» "
-            f"{meet.start:%d.%m в %H:%M}.") if meet else f"Если ответа нет — назначьте встречу с {who}."
-    return {"text": gap + now, "then": then,
+        msg = f"Помощник исполнителям не писал — спросите сами: {who}."
+    then = (f"Если ответа нет или прогноз не растёт — обсудите на встрече «{meet.title}» {meet.start:%d.%m в %H:%M} "
+            f"(участник: {who}).") if meet else f"Если ответа нет — назначьте встречу (участник: {who})."
+    return {"text": gap + msg, "then": then,
             "meeting": {"uid": meet.uid, "title": meet.title, "start": meet.start.isoformat()} if meet else None}
 
 
