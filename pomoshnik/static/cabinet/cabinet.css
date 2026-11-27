@@ -353,3 +353,5 @@ blockquote { border-left-color: var(--coral); color: var(--muted); font-style: i
 @media (max-width: 600px) { .row-3 { grid-template-columns: 1fr 1fr; } .row-3 > :first-child { grid-column: 1 / -1; } }
 select { width: 100%; min-height: 44px; padding: 9px 12px; border-radius: var(--radius-s); border: 1px solid var(--line);
   background: rgba(255, 255, 255, .78); color: var(--text); font: inherit; }
+.telemost-tool { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: -4px; }
+.telemost-tool .muted { flex: 1 1 220px; margin: 0; }

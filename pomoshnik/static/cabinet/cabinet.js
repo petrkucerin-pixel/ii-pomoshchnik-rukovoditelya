@@ -554,6 +554,38 @@ function transcriptForm(onCreated) {
   }};
 }
 
+// Ссылка Телемоста: без токена — открыть Телемост и вставить ссылку; с TELEMOST_OAUTH_TOKEN — создать автоматически.
+let telemostConfig = null;
+function telemostLinkTool(input, error) {
+  const btn = button("Открыть Телемост", () => {}, "");
+  const tip = hint("");
+  (telemostConfig ? Promise.resolve(telemostConfig) : api("/api/telemost").then(c => (telemostConfig = c))).then(cfg => {
+    if (cfg.auto) {
+      btn.textContent = "Создать ссылку Телемоста";
+      tip.textContent = "Ссылка создастся автоматически и уйдёт в приглашения.";
+    } else {
+      tip.textContent = "Откроется Телемост: нажмите «Создать видеовстречу», скопируйте ссылку и вставьте её в поле выше.";
+    }
+    btn.onclick = async () => {
+      if (!cfg.auto) {
+        window.open(cfg.create_url, "_blank", "noopener");
+        input.focus();
+        return;
+      }
+      btn.disabled = true;
+      try {
+        input.value = (await api("/api/telemost/conference", "POST")).link;
+        announce("Ссылка Телемоста создана");
+      } catch (e) {
+        error.textContent = e.message;
+      } finally {
+        btn.disabled = false;
+      }
+    };
+  }).catch(() => {});
+  return el("div", "telemost-tool", btn, tip);
+}
+
 // Робот Телемоста (TASK_11): ссылка на комнату у встречи и запуск аватара во встречу.
 function telemostBlock(m) {
   const link = el("input");
@@ -561,7 +593,7 @@ function telemostBlock(m) {
   link.placeholder = "Ссылка вида telemost.yandex.ru/j/…";
   link.value = m.link || "";
   const error = feedback(), status = hint("");
-  const box = el("div", "stack telemost", field("Ссылка на комнату", link), error);
+  const box = el("div", "stack telemost", field("Ссылка на комнату", link), telemostLinkTool(link, error), error);
   async function showStatus() {
     const r = await api("/api/robot");
     status.textContent = r.state === "idle" ? "Робот свободен. В начале встречи он зайдёт сам, если ссылка сохранена." :
@@ -627,7 +659,7 @@ function newMeetingDialog(day, at) {
   form.append(el("h2", "", "Новая встреча"), field("Название", title),
     el("div", "row-3", field("День", date), field("Начало", start), field("Длительность", minutes)),
     field("Категория", category), el("div", "field", el("span", "", "Участники"), people), field("Ещё участники", emails),
-    field("Телемост", link), el("label", "check", avatar, el("span", "", "Встречу ведёт ИИ-аватар — зайдёт в Телемост сам")),
+    field("Телемост", link), telemostLinkTool(link, error), el("label", "check", avatar, el("span", "", "Встречу ведёт ИИ-аватар — зайдёт в Телемост сам")),
     error, el("div", "actions", save, cancel));
   dlg.append(form);
   dlg.addEventListener("close", () => dlg.remove());

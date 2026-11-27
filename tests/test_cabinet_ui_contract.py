@@ -102,3 +102,4 @@ def test_meetings_calendar_alone_meeting_page_and_new_meeting_by_slot():
     js = read("cabinet.js")
     assert "meetings/m/" in js and "#meetings/protocols" in js and "#meetings/tasks" in js   # встреча — своя страница
     assert "Новая встреча" in js and "/api/people" in js and 'addEventListener("click"' in js   # клик по слоту
+    assert "/api/telemost" in js and "Открыть Телемост" in js and "/api/telemost/conference" in js       # ссылка Телемоста

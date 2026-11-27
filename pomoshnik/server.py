@@ -35,6 +35,7 @@ from .memory import Memory, collapse, period, topics
 from .protocol import ProtocolStore, questions_from_previous
 from .robot.manager import RobotManager, links_from_journal, set_link
 from .studio import Autopilot, prepare_avatar
+from .telemost import CREATE_URL, TelemostError, create_conference
 from .templates import TemplateError, discuss as discuss_template, to_dict as template_dict
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -415,6 +416,23 @@ def api_meeting_create(body: MeetingIn):
                              attendees=body.attendees, emails=[e.strip() for e in body.emails], link=link,
                              avatar=body.avatar)
         return cabinet.meeting_short(m, a)
+
+
+# ---------------- ссылка Телемоста: вручную или автоматически с токеном Яндекс 360 ----------------
+@app.get("/api/telemost")
+def api_telemost():
+    return {"auto": bool(os.environ.get("TELEMOST_OAUTH_TOKEN", "").strip()), "create_url": CREATE_URL}
+
+
+@app.post("/api/telemost/conference")
+def api_telemost_conference():
+    token = os.environ.get("TELEMOST_OAUTH_TOKEN", "").strip()
+    if not token:
+        raise HTTPException(501, "Автосоздание выключено: впишите TELEMOST_OAUTH_TOKEN (Яндекс 360 для бизнеса) в .env")
+    try:
+        return {"link": create_conference(token)}
+    except TelemostError as e:
+        raise HTTPException(502, str(e)) from None
 
 
 # ---------------- робот Телемоста (TASK_11) ----------------
