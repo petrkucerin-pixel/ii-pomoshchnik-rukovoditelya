@@ -162,6 +162,29 @@ def meeting_short(m: Meeting, a: Assistant, plist: list[dict] | None = None, lin
             "link": links.get(m.uid)}
 
 
+def risk_items(a: Assistant, today: date, days: int = 7) -> list[dict]:
+    """Риски с подробностями: из какого отчёта, что помощник уже сделал (кому и что написал в тот же день)."""
+    acts = [x for x in a.j.actions() if x["kind"] == "report_review"]
+    reports = {r.id: r for r in a.reports}
+    out, seen = [], set()
+    for x in acts:
+        pl = x["payload"] or {}
+        if pl.get("kind") != "риск_цели" or x["summary"] in seen:
+            continue
+        if not 0 <= (today - date.fromisoformat(pl["day"])).days <= days:
+            continue
+        seen.add(x["summary"])
+        srcs = [{"id": r.id, "from": r.from_name, "at": r.received.isoformat(), "subject": r.subject, "body": r.body}
+                for r in (reports.get(s) for s in pl.get("sources", [])) if r]
+        done = [{"to_name": y["payload"].get("to_name"), "topic": y["payload"].get("topic"),
+                 "question": y["payload"].get("question")}
+                for y in acts if y["payload"].get("day") == pl["day"] and y["payload"].get("to")
+                and y["payload"].get("question")]
+        out.append({"text": x["summary"], "day": pl["day"], "leader": pl.get("leader", ""), "sources": srcs,
+                    "actions": done})
+    return out
+
+
 def _risks(a: Assistant, today: date, days: int = 7) -> list[str]:
     out = []
     for x in a.j.actions():
@@ -185,7 +208,7 @@ def today(a: Assistant, protocols) -> dict:
             "decisions": [{k: g[k] for k in ("event_id", "at", "from", "subject", "summary", "reason", "count",
                                               "prepared")}
                           for g in a.groups()],
-            "risks": _risks(a, day),
+            "risks": _risks(a, day), "risk_items": risk_items(a, day),
             "meetings": [meeting_short(m, a, plist) for m in plan.meetings],
             "overdue": [task_dict(t, day) for t in plan.overdue],
             "due_soon": [task_dict(t, day) for t in plan.due_soon],

@@ -225,6 +225,18 @@ function preparedBlock(p, drafts) {
     p.unverified && p.unverified.length ? el("p", "decision-warn", "Числа нет ни в письме, ни в базе — проверьте: " + p.unverified.join(", ")) : null);
 }
 
+// Риск: строка и кнопка «Подробнее» — отчёт, из которого риск, и что помощник уже сделал.
+function riskItem(r) {
+  const src = r.sources.map(s => el("div", "risk-src", meta(s.from, stamp(s.at)), el("strong", "", s.subject),
+    el("p", "", s.body)));
+  const done = r.actions.length
+    ? el("ul", "bullets", r.actions.map(x => el("li", "", el("strong", "", x.to_name + ": "), x.question)))
+    : hint("Исполнителям помощник пока не писал.");
+  return el("div", "risk", el("p", "", r.text),
+    fold("Подробнее", el("h3", "", "Откуда"), src.length ? src : hint("Источник не сохранён."),
+      r.leader ? el("p", "reason", r.leader) : null, el("h3", "", "Что помощник уже сделал"), done));
+}
+
 function decisionItem(d, refresh) {
   const actions = el("div", "actions");
   const error = feedback();
@@ -258,15 +270,20 @@ function todayPage(host) {
       el("span", "time-row", el("strong", "", interval(m)), el("span", "", m.title), icon("arrow")),
       () => openMeeting(m), "row-link"), "Встреч на сегодня нет.");
     illus(queue, "mail");
-    const risks = card("Риски", "alert", bullets(d.risks, "Рисков не зафиксировано."));
+    const risks = card("Риски", "alert", (d.risk_items || []).length
+      ? el("div", "rows", d.risk_items.map(riskItem)) : bullets(d.risks, "Рисков не зафиксировано."));
     risks.classList.add("t-card--coral");
     mount.replaceChildren(hero(d, queue), metricCards(d.metrics),
       el("div", "dashboard", stack(queue, risks,
         card("Задачи", "list", el("h3", "", "Просроченные"), rows(d.overdue, taskRow, "Просроченных задач нет."),
           el("h3", "", "Ближайшие"), rows(d.due_soon, taskRow, "Ближайших сроков нет."))),
       stack(illus(card("Встречи дня", "meetings", schedule), "calendar"),
-        card("Окна для фокуса", "focus", rows(d.focus, f => el("p", "focus-row", interval(f)), "Свободных окон нет.")),
-        card("Сводка помощника", "mail", bullets(d.digest, "Пока нет записей.")))));
+        card("Окна для фокуса", "focus",
+          el("p", "reason", "Свободное время без встреч от часа — под стратегию и встречи один на один. Помощник не ставит сюда операционные встречи."),
+          rows(d.focus, f => el("p", "focus-row", interval(f)), "Свободных окон нет.")),
+        card("Сводка помощника", "mail",
+          el("p", "reason", "Что помощник сделал сам, без вас: передал письма, ответил, прочитал отчёты."),
+          bullets(d.digest, "Пока нет записей.")))));
   });
   refresh();
 }

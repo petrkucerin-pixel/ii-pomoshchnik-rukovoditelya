@@ -185,6 +185,27 @@ def protocol_tasks(journal: Journal) -> list[dict]:
     return list(tasks.values())
 
 
+def digest_from_journal(journal: Journal, org=None) -> list[str]:
+    """Сводка «что помощник сделал сам» из журнала — те же строки, что пишутся по ходу работы."""
+    out = []
+    for a in journal.actions():
+        k, pl = a["kind"], a["payload"] or {}
+        if k in ("mail_делегировать", "mail_авто", "mail_в_сводку"):
+            ev = (journal.event(a["event_id"]) or {}).get("payload") or {} if a["event_id"] else {}
+            subj = ev.get("subject") or a["summary"].split(" — ", 1)[0]
+            if k == "mail_делегировать":
+                who = org.by_id.get(pl.get("delegate_to")) if org else None
+                out.append(f"Ждёт вашего кадрового решения, потом уйдёт исполнителю: {subj}" if pl.get("after")
+                           else f"Передано {who.name if who else 'исполнителю'}: {subj}")
+            elif k == "mail_авто":
+                out.append(f"Подтверждено автоматически: {subj}")
+            else:
+                out.append(f"{ev.get('from_name', '')}: {pl.get('summary') or subj}".lstrip(": "))
+        elif k in ("report_review", "task_unblocked"):
+            out.append(a["summary"])
+    return out
+
+
 def prepared_from_journal(journal: Journal) -> dict[str, dict]:
     return {a["payload"]["key"]: a["payload"] for a in journal.actions()
             if a["kind"] == "decision_prepared" and (a["payload"].get("v") or 1) >= dq.PREP_VERSION}
@@ -224,7 +245,7 @@ class Assistant:
         self.held: list[dict] = held_from_journal(journal)              # передачи, ждущие решения руководителя
         self.prepared: dict[str, dict] = prepared_from_journal(journal)  # готовые решения по вопросам очереди
         self.templates = Templates(profile.dir)
-        self.digest: list[str] = []
+        self.digest: list[str] = digest_from_journal(journal, profile.org)   # что помощник сделал сам; переживает перезапуск
         self.risks: list[str] = []           # риски для целей руководителя от ревизора
         self.reports: list[Report] = reports_from_journal(journal)   # отчёты и статусы команды для ревизора
 
@@ -347,7 +368,8 @@ class Assistant:
             self._log("report_review", path="now", summary=f.digest,
                       payload={"kind": f.kind, "topic": f.topic, "day": today.isoformat(), "to": f.to_email,
                                "to_name": f.to_name, "question": f.question,
-                               "sources": list(f.sources), "minutes_saved": 5 if f.to_email else 2})
+                               "sources": list(f.sources), "leader": f.leader,
+                               "minutes_saved": 5 if f.to_email else 2})
             n += 1
         return n
 

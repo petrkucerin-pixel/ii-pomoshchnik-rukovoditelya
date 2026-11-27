@@ -398,3 +398,10 @@ def test_repeat_count_in_text_is_not_a_suspicious_number():
     raw = {"ask": "Клиент просит подтвердить запуск до 25 декабря (письмо пришло уже 4-й раз)",
            "draft_yes": "Подтверждаю 25 декабря.", "draft_no": "Пока не можем, 7 дней на проверку."}
     assert check(raw, "Подтвердите запуск до 25 декабря", [], count=4)["unverified"] == ["7"]
+
+
+def test_digest_survives_restart(a):
+    asst, _, tmp_path = a
+    assert asst.digest
+    b = again(asst, tmp_path)
+    assert b.digest[-8:] == asst.digest[-8:] and any(x.startswith("Передано ") for x in b.digest)

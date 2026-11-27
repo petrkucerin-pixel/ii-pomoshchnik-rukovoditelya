@@ -311,3 +311,16 @@ def test_link_saved_by_put_shows_in_card(env):
     c.put(f"/api/meetings/{uid}/link", json={"link": "https://telemost.yandex.ru/j/9"})
     m = c.get(f"/api/meetings/{uid}").json()["meeting"]
     assert m["link"] == "https://telemost.yandex.ru/j/9" and "avatar_at" in m
+
+
+# ---------------- риски: подробности по кнопке ----------------
+def test_risk_has_details_source_letters_and_what_assistant_did(env):
+    c, a, _ = env
+    d = c.get("/api/today").json()
+    assert d["risks"] and len(d["risk_items"]) == len(d["risks"])
+    r = d["risk_items"][0]
+    assert r["text"] == d["risks"][0] and r["day"]
+    src = r["sources"][0]
+    assert src["from"] and src["subject"] and src["body"] and src["at"]          # отчёт, из которого риск
+    assert "%" in src["body"] or any(ch.isdigit() for ch in src["body"])
+    assert all(x["to_name"] and x["question"] for x in r["actions"])           # кому помощник уже написал
