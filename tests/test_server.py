@@ -176,3 +176,9 @@ def test_robot_api_link_start_status(client, monkeypatch):
     assert st["state"] == "finished" and st["protocol_id"]
     assert client.post("/api/robot/stop").json() == {"ok": False}
     assert client.post("/api/robot/start", json={"title": "x"}).status_code == 422
+
+
+def test_page_and_static_are_revalidated_so_new_version_shows_without_ctrl_f5(client):
+    for url in ("/", "/static/cabinet/cabinet.js", "/static/theme/theme.css", "/classic"):
+        r = client.get(url)
+        assert r.status_code == 200 and r.headers.get("cache-control") == "no-cache", url

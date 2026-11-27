@@ -250,6 +250,16 @@ app = FastAPI(title="ИИ-помощник руководителя", lifespan=_
 app.mount("/static", StaticFiles(directory=STATIC, check_dir=False), name="static")
 
 
+@app.middleware("http")
+async def _revalidate(request, call_next):
+    """Страница и статика кабинета: браузер сверяет версию по ETag при каждом открытии — новая версия видна сразу."""
+    resp = await call_next(request)
+    p = request.url.path
+    if p == "/" or p == "/classic" or p.startswith("/static/"):
+        resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
 @app.get("/health")
 def health():
     return {"ok": True, "bot": stand.status["bot"] if stand else "нет", "last_poll": stand.status["last_poll"] if stand else None}
