@@ -13,12 +13,13 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
+from yadro.clock import TZ_EKB
 from yadro.journal import Journal
 
 from . import decisions as dq
 from .channels.telegram import Button, Update
 from .memory import brief, collapse, extract_facts, period
-from .plan import (Meeting, build_day_plan, load_calendar, load_tasks, render_digest, render_morning,
+from .plan import (Meeting, build_day_plan, load_calendar, load_tasks, plural, render_digest, render_morning,
                    render_schedule)
 from .profile import Profile
 from .reports import Report, review
@@ -28,6 +29,7 @@ from .triage import Decision, classify, decide
 from .writer import StyleBook, audience_of
 
 # Сколько минут руководителя экономит одно действие помощника. Допущения для метрики «освобождённые часы».
+DEFER = timedelta(hours=2)        # «Позже»: вопрос скрыт столько времени, потом возвращается
 MINUTES_SAVED = {"авто": 3, "делегировать": 5, "в_сводку": 2, "игнорировать": 1, "спросить_руководителя": 2}
 PROTOCOL_MINUTES_SAVED = 30
 # Письма без фактов для памяти: на них не тратим вызов модели.
@@ -497,7 +499,22 @@ class Assistant:
     # ---------------- очередь решений ----------------
     def groups(self) -> list[dict]:
         """Вопросы к руководителю: копии одного письма — одна карточка, с готовым решением, если оно подготовлено."""
-        return [{**g, "prepared": self.prepared.get(g["key"])} for g in dq.group(self.decisions)]
+        later: dict[str, datetime] = {}                     # когда руководитель последний раз нажал «Позже»
+        for a in self.j.actions():
+            pl = a["payload"] or {}
+            if a["kind"] == "letter_decided" and pl.get("verdict") == "later" and pl.get("key"):
+                later[pl["key"]] = a["at"]
+        out = []
+        for g in dq.group(self.decisions):
+            until = later[g["key"]] + DEFER if g["key"] in later else None
+            out.append({**g, "prepared": self.prepared.get(g["key"]),
+                        "deferred_until": until.isoformat() if until else None})   # и прошедшее: утро напоминает
+        return out
+
+    def active_groups(self, now: datetime | None = None) -> list[dict]:
+        """Вопросы, которые можно показывать сейчас: отложенные «Позже» ждут DEFER."""
+        now = now or self.clock.now()
+        return [g for g in self.groups() if not g["deferred_until"] or datetime.fromisoformat(g["deferred_until"]) <= now]
 
     def prepare_decisions(self, limit: int | None = None) -> int:
         """Готовит решения по вопросам без подготовки: черновик, совет, факты с источниками. Один вызов модели на вопрос."""
@@ -532,6 +549,17 @@ class Assistant:
     def _block_done(self, block: str, summary: str) -> None:
         self._log("tg_block", summary=summary, payload={"day": self.clock.now().date().isoformat(), "block": block})
 
+    def _active(self) -> list[dict]:
+        """Вопросы, которые ждут сейчас: без отложенных кнопкой «Позже» (их время ещё не пришло)."""
+        return getattr(self, "active_groups", self.groups)()
+
+    def _deferred_due(self, now: datetime) -> list[list[str]]:
+        """Отложенные вопросы, у которых время пришло и о которых ещё не напоминали: [[key, deferred_until]]."""
+        reminded = {tuple(x) for a in self.j.actions() if a["kind"] == "tg_remind" for x in a["payload"]["items"]}
+        due = [[g["key"], g["deferred_until"]] for g in self.groups()
+               if g.get("deferred_until") and datetime.fromisoformat(g["deferred_until"]) <= now]
+        return [x for x in due if tuple(x) not in reminded]
+
     def morning_tick(self) -> str | None:
         """Вызывает цикл бота на каждом опросе. Возвращает, какой блок отправил, или None."""
         now = self.clock.now()
@@ -541,8 +569,15 @@ class Assistant:
         if "morning" not in sent:
             self.morning_plan(self.today())
             return "morning"
+        due = self._deferred_due(now)
+        if due:                                 # «Позже» — не по кругу, а один раз, когда пришло время
+            n = len(due)
+            self.pult.send_text(f"🔔 <b>Вы просили напомнить: {n} {plural(n, 'вопрос', 'вопроса', 'вопросов')}.</b>")
+            self._next_decision()
+            self._log("tg_remind", summary=f"напомнил об отложенных: {n}", payload={"items": due})
+            return "remind"
         if "schedule" not in sent:
-            if self.groups() and now - sent["morning"] < self.BLOCK_GAP:
+            if self._active() and now - sent["morning"] < self.BLOCK_GAP:
                 return None
             self._send_schedule(self.today())
             self._block_done("schedule", "график и сроки")
@@ -560,7 +595,7 @@ class Assistant:
 
     def morning_plan(self, day: date) -> int:
         """Блок 1: приветствие, сколько решений ждут, что важно — и сразу первая карточка решения."""
-        plan, gs = self._plan(day), self.groups()
+        plan, gs = self._plan(day), self._active()
         mid = self.pult.send_text(render_morning(plan, self.p.name, len(gs), self.risks[-3:]))
         if gs:
             self._next_decision()
@@ -574,7 +609,7 @@ class Assistant:
         plan = self._plan(day)
         ov, cats = lead_overrides(self.j), default_categories()
         text = render_schedule(plan, {m.uid for m in plan.meetings if avatar_leads(m, ov, cats)})
-        n = len(self.groups())
+        n = len(self._active())
         if with_decisions and n:
             return self.pult.send_buttons(text, [[Button(f"Решения по одному ({n})", "dec:next")]])
         return self.pult.send_text(text)
@@ -584,9 +619,15 @@ class Assistant:
         return f" (пишут {g['count']}-й раз)" if g["count"] > 1 else ""
 
     def _next_decision(self):
-        gs = self.groups()
+        gs = self.active_groups()
         if not gs:
-            self.pult.send_text("Решений, которые ждут вас, больше нет.")
+            rest = self.groups()
+            if rest:
+                soon = min(datetime.fromisoformat(g["deferred_until"]) for g in rest)
+                self.pult.send_text(f"Остальные {len(rest)} вы отложили — вернусь к ним через 2 ч, "
+                                    f"в {soon.astimezone(TZ_EKB):%H:%M}.")
+            else:
+                self.pult.send_text("Решений, которые ждут вас, больше нет.")
             return
         x, e = gs[0], html.escape
         times = f" · пишут {x['count']}-й раз" if x["count"] > 2 else ""

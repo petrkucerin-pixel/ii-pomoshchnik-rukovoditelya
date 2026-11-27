@@ -420,3 +420,24 @@ def test_digest_is_only_what_assistant_did_without_repeats(a):
     assert ACCESS not in " ".join(d)                                                # доступ ещё не передан
     b = again(asst, tmp_path)
     assert digest_from_journal(b.j, b.p.org) == d                                   # переживает перезапуск
+
+
+# ---------------- «Позже» скрывает вопрос на 2 часа, а не гоняет по кругу ----------------
+def test_later_hides_question_for_two_hours_no_loop(a):
+    asst, _, tmp_path = a
+    total = len(asst.groups())
+    shown = []
+    for _ in range(total + 3):                                    # жмём «Позже» на всём подряд
+        asst.handle(Update(1, "callback", 555, "dec:next", 10, "cb"))
+        kind, text, buttons = asst.pult.sent[-1]
+        if not buttons:
+            break
+        eid = int(buttons[0].split(":")[2])
+        shown.append(eid)
+        asst.handle(Update(1, "callback", 555, f"dec:later:{eid}", 10, "cb"))
+    assert len(shown) == len(set(shown)) == total                 # каждый показан один раз
+    assert "отложили" in asst.pult.sent[-1][1] and "2 ч" in asst.pult.sent[-1][1]
+    assert asst.active_groups() == [] and all(g["deferred_until"] for g in asst.groups())
+    assert len(again(asst, tmp_path).active_groups()) == 0        # отложено и после перезапуска
+    asst.clock.advance(hours=2, minutes=1)
+    assert len(asst.active_groups()) == total                     # через 2 часа вернулись

@@ -108,3 +108,33 @@ def test_plan_command_gives_schedule_and_decisions_button(a):
     asst.handle(Update(1, "text", 555, "/plan", 10))
     kind, text, buttons = asst.pult.sent[-1]
     assert "График" in text and buttons == ["dec:next"]
+
+
+# ---------------- «Позже»: живая проверка Пита 27.11 — отложенные вопросы шли по кругу ----------------
+def test_deferred_questions_come_back_once_after_two_hours(a):
+    asst, clock, _ = a
+    asst.process_inbox()
+    asst.morning_tick()
+    eid = asst.groups()[0]["event_id"]
+    asst.handle(cb(f"dec:later:{eid}"))
+    clock.advance(minutes=119)
+    n = len(asst.pult.sent)
+    for _ in range(3):
+        asst.morning_tick()
+    assert not any("Вы просили напомнить" in t for t in texts(asst, n))
+    clock.advance(minutes=2)
+    for _ in range(3):                                          # бот опрашивает часто — напоминание одно
+        asst.morning_tick()
+    reminders = [t for t in texts(asst, n) if "Вы просили напомнить" in t]
+    assert len(reminders) == 1
+    assert asst.pult.sent[-1][2] and asst.pult.sent[-1][2][0].startswith("dec:yes:")   # и сразу карточка
+
+
+def test_morning_counts_only_questions_that_are_not_deferred(a):
+    asst, clock, _ = a
+    asst.process_inbox()
+    total = len(asst.groups())
+    asst.handle(cb(f"dec:later:{asst.groups()[0]['event_id']}"))
+    asst.morning_tick()
+    greet = next(t for t in texts(asst) if "Доброе утро" in t)
+    assert f"Ждут только вас: {total - 1}." in greet
