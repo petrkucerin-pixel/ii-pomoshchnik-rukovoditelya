@@ -65,7 +65,7 @@ def finish_session(a: Assistant, la, embed_id: str, title: str, uid: str | None)
     text = transcript_to_text(la.transcript(s.id), merge=True)
     if not text.strip():
         return 0
-    return a.new_meeting(text, title, end_time(s, TZ_EKB), meeting_uid=uid)
+    return a.new_meeting(text, title, a.on_work_day(end_time(s, TZ_EKB)), meeting_uid=uid)
 
 
 class Autopilot:
@@ -136,6 +136,17 @@ class Autopilot:
                            payload={"uid": m.uid, "day": a.today().isoformat(), "title": m.title, "robot": True,
                                     "start": m.start.isoformat(), "end": m.end.isoformat(), "embed_id": None,
                                     "url": link, "minutes_saved": 0})
+            return
+        if self.robot is not None:     # аватар ходит только в Телемост; нет ссылки — не идёт и говорит один раз
+            day = a.today().isoformat()
+            a.pult.send_text(f"«{m.title}» в {m.start:%H:%M} ведёт ваш ИИ-аватар, но у встречи нет ссылки на Телемост — "
+                             "аватар не придёт. Добавьте ссылку в карточке встречи в кабинете.")
+            a.j.log_action("avatar_auto_ready", path="now", summary=f"{m.title} {m.start:%H:%M}: нет ссылки на Телемост",
+                           payload={"uid": m.uid, "day": day, "title": m.title, "robot": True, "skipped": "no_link",
+                                    "start": m.start.isoformat(), "end": m.end.isoformat(), "embed_id": None,
+                                    "url": None, "minutes_saved": 0})
+            a.j.log_action("avatar_auto_done", path="now", summary=f"{m.title}: нет ссылки на Телемост",
+                           payload={"uid": m.uid, "day": day, "result": "no_link", "protocol_id": None})
             return
         r = prepare_avatar(a, self._la(), self.avatar_id, m.title, m.uid, max_seconds=minutes * 60)
         a.j.log_action("avatar_auto_ready", path="now",

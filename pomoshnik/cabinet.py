@@ -12,7 +12,7 @@ from urllib.parse import urlencode
 from yadro.journal import from_db
 
 from .assistant import Assistant, digest_from_journal, meeting_brief, protocol_tasks
-from .memory import collapse, period, topics
+from .memory import collapse, period, topics, title_of
 from .metrics import compute_metrics
 from .plan import Meeting, TaskRow, build_day_plan, focus_windows
 from .protocol import questions_from_previous, render_markdown
@@ -466,12 +466,13 @@ def memory(a: Assistant, q: str = "") -> dict:
     mem = a.memory
     if mem is None:
         return {"q": q, "facts": 0, "topics": []}
+    a.sync_memory()                          # решения руководителя — сразу в памяти (TASK_17)
     groups = topics(mem)
     if q.strip():
-        keys = {(f.topic, f.source, f.quote) for f in (mem.history(q) or mem.search(q))}
+        keys = {(f.topic, f.source, f.quote) for f in mem.related(q)}
         groups = [fs for fs in groups if any((f.topic, f.source, f.quote) in keys for f in fs)]
     return {"q": q, "facts": len(mem.all()), "topics": [
-        {"topic": fs[-1].topic, "kind": fs[-1].kind, "last_at": fs[-1].when.isoformat(), "last_what": fs[-1].what,
+        {"topic": title_of(fs), "kind": fs[-1].kind, "last_at": fs[-1].when.isoformat(), "last_what": fs[-1].what,
          "history": [{"period": period(g), "who": g[0].who, "what": g[-1].what, "quote": g[0].quote,
                       "sources": [x.source for x in g]} for g in collapse(fs)]} for fs in groups]}
 

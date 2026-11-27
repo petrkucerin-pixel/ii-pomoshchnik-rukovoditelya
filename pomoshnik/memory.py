@@ -129,6 +129,68 @@ class Memory:
     def all(self) -> list[Fact]:
         return self._rows("1 = 1", (), 1_000_000)
 
+    def related(self, query: str, limit: int = 40) -> list[Fact]:
+        """Всё по теме: найденные факты и их темы целиком, включая похожие («Облако Плюс» и «Договор с Облако Плюс»)."""
+        base = self.history(query) or self.search(query)
+        if not base:
+            return []
+        keys = {topic_key(f.topic) for f in base}
+        out = [f for g in clusters(self.all()) if any(topic_key(f.topic) in keys for f in g) for f in g]
+        return sorted(out, key=lambda f: f.when)[-limit:]
+
+
+# ---------------- одна тема — одно место (TASK_17) ----------------
+# Модель называет одну тему по-разному: «Облако Плюс», «Договор с Облако Плюс». Темы склеиваются, если основа
+# короткого названия целиком входит в длинное. Одно общее слово («План») не склеивает — кроме имени собственного
+# («ТехноСтрой»): длинное слово с большой буквы.
+_STOP = {"для", "при", "над", "под", "или", "это", "все", "всё"}
+
+
+def _stems(topic: str) -> tuple[frozenset, bool]:
+    words = [w for w in _WORD.findall(topic) if len(w) >= 3 and _norm(w) not in _STOP]
+    stems = frozenset(_norm(w)[:4] for w in words)
+    w = words[0] if len(words) == 1 else ""
+    # имя собственное: вся тема — одно слово («ТехноСтрой») или заглавная внутри слова; «Сделка 7» — не имя
+    proper = len(w) >= 6 and w[0].isupper() and (topic.strip() == w or any(c.isupper() for c in w[1:]))
+    return stems, proper
+
+
+def _linked(a: tuple[frozenset, bool], b: tuple[frozenset, bool]) -> bool:
+    (sa, pa), (sb, pb) = a, b
+    small, big, proper = (sa, sb, pa) if len(sa) <= len(sb) else (sb, sa, pb)
+    if not small or not small <= big:
+        return False
+    return len(small) >= 2 or proper
+
+
+def clusters(facts: list[Fact]) -> list[list[Fact]]:
+    """Факты по склеенным темам; внутри — по времени."""
+    by: dict[str, list[Fact]] = {}
+    for f in facts:
+        by.setdefault(topic_key(f.topic), []).append(f)
+    keys = list(by)
+    stems = {k: _stems(by[k][0].topic) for k in keys}
+    parent = {k: k for k in keys}
+
+    def root(k):
+        while parent[k] != k:
+            parent[k] = parent[parent[k]]
+            k = parent[k]
+        return k
+    for i, x in enumerate(keys):
+        for y in keys[i + 1:]:
+            if _linked(stems[x], stems[y]):
+                parent[root(x)] = root(y)
+    groups: dict[str, list[Fact]] = {}
+    for k in keys:
+        groups.setdefault(root(k), []).extend(by[k])
+    return [sorted(g, key=lambda f: f.when) for g in groups.values()]
+
+
+def title_of(facts: list[Fact]) -> str:
+    """Название склеенной темы — самое короткое из её названий: «Облако Плюс», а не «Договор с Облако Плюс»."""
+    return min((f.topic for f in facts), key=lambda t: (len(t), t))
+
 
 def collapse(facts: list[Fact]) -> list[list[Fact]]:
     """Один и тот же статус от того же человека подряд — одна группа: «7 раз без изменений»."""
@@ -163,16 +225,13 @@ def _cut_note(n: int) -> str:
 
 
 def topics(mem: Memory) -> list[list[Fact]]:
-    """Факты по темам: внутри темы по времени, темы — свежие сверху."""
-    by: dict[str, list[Fact]] = {}
-    for f in mem.all():
-        by.setdefault(topic_key(f.topic), []).append(f)
-    return sorted(by.values(), key=lambda fs: fs[-1].when, reverse=True)
+    """Факты по склеенным темам: внутри темы по времени, темы — свежие сверху."""
+    return sorted(clusters(mem.all()), key=lambda fs: fs[-1].when, reverse=True)
 
 
 def brief(mem: Memory, max_chars: int = 20000) -> str:
     """Вся накопленная история по темам для контекста аватара. Свежие темы выше; не влезло — старые темы отрезаются."""
-    blocks = ["\n".join([f"{fs[-1].topic} ({fs[-1].kind})"] + [f"- {group_line(g)}" for g in collapse(fs)])
+    blocks = ["\n".join([f"{title_of(fs)} ({fs[-1].kind})"] + [f"- {group_line(g)}" for g in collapse(fs)])
               for fs in topics(mem)]
     out, used = [], 0
     for i, b in enumerate(blocks):

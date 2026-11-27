@@ -190,11 +190,13 @@ def protocol_tasks(journal: Journal) -> list[dict]:
     return list(tasks.values())
 
 
-def digest_from_journal(journal: Journal, org=None) -> list[str]:
+def digest_from_journal(journal: Journal, org=None, since: datetime | None = None) -> list[str]:
     """Сводка «что помощник сделал сам»: только его действия, глаголом. Что ждёт руководителя и риски — в своих
     разделах, сюда не попадают. Копии одного письма — одна строка с числом раз."""
     lines: list[str] = []
     for a in journal.actions():
+        if since is not None and a["at"] < since:      # «сделал без вас» за сегодня, а не вся история
+            continue
         k, pl = a["kind"], a["payload"] or {}
         if k in ("mail_делегировать", "mail_авто", "mail_в_сводку"):
             ev = (journal.event(a["event_id"]) or {}).get("payload") or {} if a["event_id"] else {}
@@ -298,6 +300,55 @@ class Assistant:
     def today(self) -> date:
         return work_day(self.clock)
 
+    def now(self) -> datetime:
+        """Сейчас на рабочем дне помощника. С DEMO_DATE — учебный день и настоящее время: письма, встречи
+        и протоколы живут в одном календаре (проверка Пита 27.11: факты со встреч были на две недели «старше» писем)."""
+        return self.on_work_day(self.clock.now())
+
+    def on_work_day(self, moment: datetime) -> datetime:
+        d = self.today()
+        return moment if moment.date() == d else moment.replace(year=d.year, month=d.month, day=d.day)
+
+    # ---------------- решения руководителя → память (TASK_17) ----------------
+    def sync_memory(self) -> int:
+        """Решения руководителя по вопросам — в память, к темам писем, о которых шла речь. Читает журнал, поэтому
+        решение из Telegram, кабинета и голосом попадает одинаково и один раз. Возвращает, сколько записал."""
+        if self.memory is None:
+            return 0
+        from .memory import Fact
+        acts = self.j.actions()
+        done = {(x["payload"].get("key"), x["payload"].get("verdict")) for x in acts if x["kind"] == "memory_decision"}
+        last: dict[str, dict] = {}
+        eids: dict[str, set] = {}
+        for x in acts:
+            pl = x["payload"] or {}
+            if x["kind"] == "letter_decided" and pl.get("verdict") in ("yes", "no"):
+                last[pl["key"]] = x
+                eids.setdefault(pl["key"], set()).add(x["event_id"])
+        replies = {x["event_id"]: x["payload"].get("body", "") for x in acts
+                   if x["kind"] == "mail_sent" and x["payload"].get("kind") == "решение"}
+        facts = self.memory.all()
+        n = 0
+        for key, x in last.items():
+            verdict = x["payload"]["verdict"]
+            if (key, verdict) in done:
+                continue
+            evs = [e for e in (self.j.event(i) for i in sorted(eids[key]) if i) if e]
+            letters = {e["external_id"] for e in evs}
+            subject = next((e["payload"].get("subject") for e in evs if e["payload"].get("subject")), key)
+            subject = re.sub(r"^((re|fwd?)\s*:\s*)+", "", subject, flags=re.I).strip()
+            topics_ = sorted({f.topic for f in facts if f.source in letters}) or [subject]
+            body = next((replies[i] for i in sorted(eids[key]) if replies.get(i)), "")
+            said = next((ln.strip() for ln in body.splitlines() if ln.strip() and not ln.startswith("—")), "")
+            word = "согласовано" if verdict == "yes" else "отказ"
+            what = f"{self.p.name}: {word} — {subject}"
+            self.memory.add([Fact(topic=t, kind="решение", what=what, who=self.p.name, when=self.on_work_day(x["at"]),
+                                  source=f"решение {x['event_id']}", quote=said[:200] or word) for t in topics_])
+            self._log("memory_decision", path="now", event_id=x["event_id"], summary=what,
+                      payload={"key": key, "verdict": verdict, "topics": topics_})
+            n += 1
+        return n
+
     def _log(self, kind: str, *, actor="assistant", path=None, summary="", payload=None, event_id=None):
         self.j.log_action(kind, actor=actor, path=path, summary=summary, payload=payload or {}, event_id=event_id)
 
@@ -325,6 +376,7 @@ class Assistant:
     # ---------------- почта ----------------
     def process_inbox(self) -> dict:
         self.writer.learn_pending()             # правки руководителя в карточках → правила стиля для следующих писем
+        self.sync_memory()                      # решения руководителя → память
         letters = self.mail.fetch_new()
         counts: dict[str, int] = {}
         for e in letters:
@@ -397,7 +449,8 @@ class Assistant:
             return "Напишите тему, например: «что по Облако Плюс»."
         if self.memory is None:
             return "Память помощника не подключена."
-        facts = self.memory.history(query) or self.memory.search(query)
+        self.sync_memory()                      # решение, принятое минуту назад, уже в ответе
+        facts = self.memory.related(query)
         if not facts:
             return f"В памяти ничего нет по «{html.escape(query)}»."
         lines = [f"<b>Что известно: {html.escape(query)}</b>"]
@@ -410,6 +463,7 @@ class Assistant:
         return "\n".join(lines)
 
     def meeting_brief(self, days: int = 7) -> tuple[str, list[str]]:
+        self.sync_memory()                      # аватар не спросит про то, что руководитель уже решил
         return meeting_brief(self.j, self.memory, self.today(), days)
 
     def review_reports(self) -> int:
@@ -618,7 +672,8 @@ class Assistant:
             self._block_done("schedule", "график и сроки")
             return "schedule"
         if "digest" not in sent and now - sent["schedule"] >= self.BLOCK_GAP:
-            items = digest_from_journal(self.j, self.p.org)[-8:]
+            start = self.clock.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            items = digest_from_journal(self.j, self.p.org, since=start)[-8:]
             if items:
                 self.pult.send_text(render_digest(items, os.environ.get("STAND_URL", "")))
             self._block_done("digest", f"сделал без вас: {len(items)}")

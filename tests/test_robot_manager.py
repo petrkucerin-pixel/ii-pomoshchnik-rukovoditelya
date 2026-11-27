@@ -240,6 +240,20 @@ def test_autopilot_sends_robot_when_meeting_has_link(env):
     assert len(done) == 1 and done[0]["payload"]["result"] == "protocol"
 
 
+
+def test_autopilot_without_link_does_not_send_avatar_and_says_once(env):
+    """TASK_17: аватар ходит только в Телемост. Нет ссылки — не готовит аватара (раньше LiveAvatar падал дважды)."""
+    a, clock, llm, tmp = env
+    la, run = FakeLA(), fake_runner()
+    rm = manager(a, la, run, tmp)
+    ap = Autopilot(lambda: a, lambda: la, avatar_id="x", base_url="http://stand", categories={"операционная"}, robot=rm)
+    clock.advance(minutes=2)
+    for _ in range(3):
+        ap.tick()
+    assert not run.calls and not la.prompts
+    told = [t for _, t, _ in a.pult.sent if "нет ссылки на Телемост" in t]
+    assert len(told) == 1 and kinds(a, "avatar_auto_done")[0]["payload"]["result"] == "no_link"
+
 def test_only_avatar_spoke_means_no_protocol(env):
     a, clock, llm, tmp = env
     la = FakeLA(entries=[{"role": "avatar", "transcript": "Здравствуйте! Начнём?", "relative_timestamp": 3}])
