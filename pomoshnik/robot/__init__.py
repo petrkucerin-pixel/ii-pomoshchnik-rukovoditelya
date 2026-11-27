@@ -36,7 +36,8 @@ _POLL = """(seen) => {
   const m = btn && btn.innerText.match(/(\\d+)/);
   const names = [...document.querySelectorAll('[class*="TextName_"]')].map(e => e.textContent.trim());
   return {state: __bridge.state, log: __bridge.log, transcript: __bridge.transcript, sessionAt: __bridge.sessionAt || 0,
-          signals: __bridge.signals.slice(seen), count: m ? Number(m[1]) : null, names};
+          signals: __bridge.signals.slice(seen), count: m ? Number(m[1]) : null, names,
+          loud: __bridge.loud ? __bridge.loud() : 0};
 }"""
 
 
@@ -45,16 +46,21 @@ CROSSTALK_S = 5          # сколько секунд двое и больше 
 CROSSTALK_PAUSE_S = 60   # не чаще раза в минуту
 
 
+def talking_by_vad(vad: dict, people: dict, robot_name: str) -> int:
+    """Сколько подписанных участников (кроме робота) Телемост отмечает говорящими."""
+    return sum(1 for pid, on in vad.items() if on and people.get(pid) and people[pid] != robot_name)
+
+
 class Crosstalk:
-    """Говорят сразу несколько человек (по значкам голоса Телемоста) → пора попросить говорить по очереди.
-    Считаются только подписанные участники, кроме самого робота."""
+    """Говорят сразу несколько человек → пора попросить говорить по очереди.
+    Сколько говорит: по значкам голоса Телемоста или по громкости входящих дорожек — что больше.
+    Живая проверка 27.11: Телемост зажигает значок только у одного, громкость дорожек видит обоих."""
 
     def __init__(self, robot_name: str):
         self.name, self.since, self.last = robot_name, None, None
 
-    def check(self, vad: dict, people: dict, now: float) -> bool:
-        talking = [pid for pid, on in vad.items() if on and people.get(pid) and people[pid] != self.name]
-        if len(talking) < 2:
+    def check(self, talking: int, now: float) -> bool:
+        if talking < 2:
             self.since = None
             return False
         self.since = self.since if self.since is not None else now
@@ -252,7 +258,8 @@ async def run_meeting(link: str, *, name: str, token: str | None, until: float, 
                 st.participants |= {n for n in [*b["names"], *st.people.values()] if n and n != name}
                 st.status = {"live": "аватар во встрече", "error": "ошибка аватара", "ended": "аватар отключился"}.get(
                     b["state"], st.status)
-                if b["state"] == "live" and crosstalk.check(st.vad, st.people, time.time()):
+                talking = max(talking_by_vad(st.vad, st.people, name), b.get("loud") or 0)
+                if b["state"] == "live" and crosstalk.check(talking, time.time()):
                     st.note("говорят одновременно — аватар просит по очереди")
                     await room.evaluate("t => __bridge.say(t)", CROSSTALK_TEXT)
                 if b["state"] == "ended":
