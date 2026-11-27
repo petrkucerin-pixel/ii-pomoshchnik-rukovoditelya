@@ -201,7 +201,7 @@ function taskView(host, id) {
     const actions = el("div", "actions"), error = feedback();
     const due = el("input");
     due.type = "date";
-    due.value = t.due;
+    due.value = p.proposal ? p.proposal.due : t.due;        // предложенная исполнителем дата — уже в поле
     due.setAttribute("aria-label", "Новый срок");
     const act = (action, body = {}) => submitAction(actions, error, async () => {
       await api("/api/tasks/" + encodeURIComponent(id) + "/action", "POST", {action, ...body});

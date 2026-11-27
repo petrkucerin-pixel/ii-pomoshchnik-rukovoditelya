@@ -181,6 +181,56 @@ def chase_overdue(a: Assistant) -> int:
     return n
 
 
+def plan_conflicts(a: Assistant, t: TaskRow, new: date) -> list[str]:
+    """Расходится ли новый срок с планами: прошлая дата, встреча по той же теме раньше срока, задача-последователь
+    из протокола с более ранним сроком."""
+    today = a.today()
+    now = datetime.combine(today, a.clock.now().timetz())      # прошедшие сегодня встречи не в счёт
+    out = []
+    if new <= today:
+        out.append(f"дата {new:%d.%m} уже прошла")
+    key = _entity(t.task).lower()
+    if key:
+        for m in a.meetings:
+            if key in m.title.lower() and m.start >= now and m.start.date() < new:
+                out.append(f"встреча «{m.title}» {m.start:%d.%m} раньше нового срока")
+                break
+    pt = protocol_tasks(a.j)
+    me = next((x for x in pt if f"p{x['protocol_id']}-{x['action_id']}" == t.id), None)
+    if me:
+        for x in pt:
+            if x["protocol_id"] == me["protocol_id"] and me["n"] in x["after"] and x["due"] < new:
+                out.append(f"после неё идёт «{x['what']}» со сроком {x['due']:%d.%m}")
+    return out
+
+
+def apply_answer_date(a: Assistant, asked_subject: str, body: str, owner: str) -> dict | None:
+    """Исполнитель назвал дату в ответе: срок переносится сам, если не расходится с планами; иначе — предложение
+    руководителю на странице задачи. Возвращает, что сделано, или None — даты в ответе нет."""
+    from yadro.deadlines import parse_deadline
+    m = re.match(r"Задача «(.+)» — срок", asked_subject)
+    t = next((x for x, _ in all_tasks(a) if m and x.task == m.group(1) and x.owner == owner and x.status not in DONE),
+             None)
+    if not t:
+        return None
+    dl = parse_deadline(body, datetime.combine(a.today(), a.clock.now().timetz()))
+    if not dl:
+        return None
+    new = dl.due.date()
+    if new == t.due:
+        return {"action": "same", "due": new}
+    conflicts = plan_conflicts(a, t, new)
+    if conflicts:
+        a._log("task_action", path="decision", summary=f"{owner} предлагает срок «{t.task}» {new:%d.%m}, но "
+               + "; ".join(conflicts) + " — решаете вы",
+               payload={"task_id": t.id, "action": "proposal", "due": new.isoformat(), "conflicts": conflicts})
+        return {"action": "proposal", "due": new, "conflicts": conflicts}
+    a._log("task_action", path="now", summary=f"Перенёс срок «{t.task}» на {new:%d.%m}: так ответил исполнитель "
+           f"({owner}), с планами не расходится",
+           payload={"task_id": t.id, "action": "move", "due": new.isoformat(), "by": "answer", "minutes_saved": 3})
+    return {"action": "move", "due": new}
+
+
 def task_questions(a: Assistant, names: set[str]) -> list[str]:
     """Для встречи: по задачам участников, о которых помощник спрашивал, — что ответили или что ответа нет."""
     asked, out = asked_tasks(a), []
@@ -283,11 +333,21 @@ def task_page(a: Assistant, task_id: str) -> dict | None:
     hist = task_history(a, task_id)
     asked = asked_tasks(a)
     answer = _answer(a, t, asked[task_id]) if task_id in asked else None
+    proposal = None
+    for h in hist:                       # последнее предложение исполнителя, если после него срок не переносили
+        if h["action"] == "proposal":
+            proposal = {"due": h["due"], "text": h["summary"]}
+        elif h["action"] in ("move", "done"):
+            proposal = None
     now = datetime.combine(today, a.clock.now().timetz())       # прошедшие сегодня встречи не предлагаем
     meet = next((m for m in a.meetings if m.start >= now and t.owner in m.attendees), None)
     where = f" на встрече «{meet.title}» {meet.start:%d.%m %H:%M}" if meet else " один на один"
     if t.status in DONE:
         text = "Задача закрыта, ничего делать не нужно."
+    elif proposal:
+        text = (f"{proposal['text']}. Нажмите «Перенести срок» — дата уже подставлена — или обсудите{where}.")
+    elif answer and any(h["action"] == "move" and h["at"] >= asked[task_id].isoformat() for h in hist):
+        text = f"Исполнитель ({t.owner}) назвал новый срок, помощник перенёс его сам: с планами не расходится."
     elif answer:
         text = (f"Ответ пришёл от исполнителя ({t.owner}) — прочитайте ниже и решите: перенести срок или "
                 f"отметить выполненной.")
@@ -299,7 +359,7 @@ def task_page(a: Assistant, task_id: str) -> dict | None:
     else:
         text = f"Срок {t.due:%d.%m}, всё в рамках — вмешиваться не нужно."
     return {"task": task_dict(t, today, src, asked), "letters": letters[-6:], "facts": facts, "flags": flags,
-            "history": hist, "answer": answer, "next": {"text": text, "actions": list(TASK_ACTIONS),
+            "history": hist, "answer": answer, "proposal": proposal, "next": {"text": text, "actions": list(TASK_ACTIONS),
                                       "meeting": {"uid": meet.uid, "title": meet.title, "start": meet.start.isoformat()}
                                       if meet else None}}
 

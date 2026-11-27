@@ -315,7 +315,7 @@ class Assistant:
         решение из Telegram, кабинета и голосом попадает одинаково и один раз. Возвращает, сколько записал."""
         if self.memory is None:
             return 0
-        from .memory import Fact
+        from .memory import Fact, clusters
         acts = self.j.actions()
         done = {(x["payload"].get("key"), x["payload"].get("verdict")) for x in acts if x["kind"] == "memory_decision"}
         last: dict[str, dict] = {}
@@ -328,6 +328,7 @@ class Assistant:
         replies = {x["event_id"]: x["payload"].get("body", "") for x in acts
                    if x["kind"] == "mail_sent" and x["payload"].get("kind") == "решение"}
         facts = self.memory.all()
+        group_of = {f.topic: i for i, g in enumerate(clusters(facts)) for f in g}
         n = 0
         for key, x in last.items():
             verdict = x["payload"]["verdict"]
@@ -337,11 +338,14 @@ class Assistant:
             letters = {e["external_id"] for e in evs}
             subject = next((e["payload"].get("subject") for e in evs if e["payload"].get("subject")), key)
             subject = re.sub(r"^((re|fwd?)\s*:\s*)+", "", subject, flags=re.I).strip()
-            topics_ = sorted({f.topic for f in facts if f.source in letters}) or [subject]
+            one_per_topic: dict[int, str] = {}         # склеенная тема — одна запись решения, а не по каждому названию
+            for t in sorted({f.topic for f in facts if f.source in letters}):
+                one_per_topic.setdefault(group_of[t], t)
+            topics_ = list(one_per_topic.values()) or [subject]
             body = next((replies[i] for i in sorted(eids[key]) if replies.get(i)), "")
             said = next((ln.strip() for ln in body.splitlines() if ln.strip() and not ln.startswith("—")), "")
             word = "согласовано" if verdict == "yes" else "отказ"
-            what = f"{self.p.name}: {word} — {subject}"
+            what = f"{word} — {subject}"
             self.memory.add([Fact(topic=t, kind="решение", what=what, who=self.p.name, when=self.on_work_day(x["at"]),
                                   source=f"решение {x['event_id']}", quote=said[:200] or word) for t in topics_])
             self._log("memory_decision", path="now", event_id=x["event_id"], summary=what,

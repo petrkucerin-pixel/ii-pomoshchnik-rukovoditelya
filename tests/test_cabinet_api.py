@@ -445,7 +445,7 @@ def test_owner_reply_goes_to_memory_not_to_leader_and_reaches_next_meeting(env):
     mem = c.get("/api/memory?q=ТехноСтрой").json()
     assert any("20.12" in h["what"] or "20.12" in h["quote"] for t in mem["topics"] for h in t["history"])
     page = c.get("/api/tasks/t001").json()
-    assert page["answer"] and "Ответ пришёл" in page["next"]["text"]
+    assert page["answer"] and "перенёс" in page["next"]["text"]                # назвала 20.12 — срок перенесён сам
     day = date.fromisoformat(c.get("/api/today").json()["day"])
     meet = next(m for m in a.meetings if m.start.date() > day and "Ольга Смирнова" in m.attendees)
     card = c.get(f"/api/meetings/{meet.uid}").json()
@@ -453,3 +453,42 @@ def test_owner_reply_goes_to_memory_not_to_leader_and_reaches_next_meeting(env):
     late = next(m for m in a.meetings if m.start.date() > day and "Алексей Новиков" in m.attendees)
     hq = c.get(f"/api/meetings/{late.uid}").json()["history_questions"]
     assert any("Обновить прогноз" in q and "ответа нет" in q for q in hq)                  # не ответил — спросит
+
+
+# ---------------- исполнитель назвал дату: перенос, если не расходится с планами ----------------
+def _reply_to_ask(c, a, task_word, owner, email, body):
+    from types import SimpleNamespace
+    from pomoshnik import cabinet
+    cabinet.chase_overdue(a)
+    asked = next(x for x in letters(c, direction="out") if x["subject"].startswith("Задача «") and task_word in x["subject"])
+    a.mail = ReplyBox([SimpleNamespace(id=f"reply-{task_word}", from_name=owner, from_email=email,
+                                       to="p01@company.example", subject="Re: " + asked["subject"], body=body,
+                                       received=a.clock.now())])
+    a.process_inbox()
+
+
+def test_named_date_without_conflict_moves_deadline_itself(env):
+    c, a, _ = env
+    _reply_to_ask(c, a, "Подготовить КП", "Ольга Смирнова", "p02@company.example",
+                  "Статус ошибочный. КП для «ТехноСтрой» отправлю клиенту 20.12.")
+    t = next(x for x in c.get("/api/tasks").json()["tasks"] if x["id"] == "t001")
+    assert t["due"] == "2026-12-20" and t["status"] == "перенесена" and not t["overdue"]
+    p = c.get("/api/tasks/t001").json()
+    assert "перенёс" in p["next"]["text"] and p["history"][-1]["action"] == "move"
+
+
+def test_named_date_conflicting_with_plans_goes_to_leader(env):
+    c, a, _ = env
+    _reply_to_ask(c, a, "Подписать договор", "Сергей Морозов", "p05@company.example",
+                  "Юристы ещё смотрят, подпишем 22.12.")
+    t = next(x for x in c.get("/api/tasks").json()["tasks"] if x["id"] == "t005")
+    assert t["due"] == "2026-12-01"                                             # срок не тронут
+    p = c.get("/api/tasks/t005").json()
+    assert p["proposal"]["due"] == "2026-12-22" and "Облако Плюс" in p["next"]["text"] and "18.12" in p["next"]["text"]
+
+
+def test_reply_without_date_changes_nothing(env):
+    c, a, _ = env
+    _reply_to_ask(c, a, "Подготовить КП", "Ольга Смирнова", "p02@company.example", "Работаю, всё в порядке.")
+    t = next(x for x in c.get("/api/tasks").json()["tasks"] if x["id"] == "t001")
+    assert t["due"] == "2026-12-24" and c.get("/api/tasks/t001").json()["proposal"] is None
