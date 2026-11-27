@@ -780,6 +780,35 @@ def api_template_discuss(key: str, d: DiscussIn):
     return res
 
 
+# ---------------- как пишет руководитель (TASK_14): правила стиля вместо шаблонов ----------------
+class TeachIn(BaseModel):
+    message: str
+
+
+@app.get("/api/style")
+def api_style():
+    with stand.lock:
+        w = stand.assistant.writer
+        w.learn_pending()                   # свежие правки руководителя — сразу в правила
+        return w.overview()
+
+
+@app.post("/api/style/teach")
+def api_style_teach(d: TeachIn):
+    if not d.message.strip():
+        raise HTTPException(422, "напишите, как писать письма")
+    with stand.lock:
+        return stand.assistant.writer.teach(d.message)
+
+
+@app.delete("/api/style/rules/{rule_id}")
+def api_style_forget(rule_id: int):
+    with stand.lock:
+        if not stand.assistant.writer.forget(rule_id):
+            raise HTTPException(404, "нет такого правила")
+    return {"ok": True}
+
+
 @app.get("/api/meetings")
 def api_meetings(start: date | None = None, days: int = 7):
     with stand.lock:

@@ -24,6 +24,7 @@ from .reports import Report, review
 from .protocol import ProtocolStore, build_protocol, questions_from_previous, render_markdown
 from .templates import Templates
 from .triage import Decision, classify, decide
+from .writer import StyleBook
 
 # Сколько минут руководителя экономит одно действие помощника. Допущения для метрики «освобождённые часы».
 MINUTES_SAVED = {"авто": 3, "делегировать": 5, "в_сводку": 2, "игнорировать": 1, "спросить_руководителя": 2}
@@ -280,14 +281,20 @@ class Assistant:
         self.j.log_action(kind, actor=actor, path=path, summary=summary, payload=payload or {}, event_id=event_id)
 
     @property
+    def writer(self) -> StyleBook:
+        """Как пишет руководитель: правила стиля и тексты писем, которые помощник составил себе сам (TASK_14)."""
+        return StyleBook(self.llm, self.j, self.templates, style=self.p.style)
+
+    @property
     def signature(self) -> str:
         return f"— ИИ-помощник {os.environ.get('LEADER_NAME_GENITIVE') or self.p.name}"
 
     def send(self, to: str, template: str, kind: str, *, in_reply_to=None, event_id=None, **values) -> str:
-        """Письмо по шаблону руководителя. Каждое исходящее — в журнал, кабинет показывает его в переписке."""
+        """Письмо в стиле руководителя: текст помощник составил сам по правилам стиля, факты подставляет код.
+        Каждое исходящее — в журнал, кабинет показывает его в переписке."""
         values.setdefault("подпись", self.signature)
         values.setdefault("руководитель", self.p.name)
-        subject, body = self.templates.render(template, **values)
+        subject, body = self.writer.render(template, **values)
         mid = self.send_mail.send(to, subject, body, in_reply_to=in_reply_to)
         self._log("mail_sent", path="now", event_id=event_id, summary=f"{to}: {subject}",
                   payload={"to": to, "subject": subject, "body": body, "in_reply_to": in_reply_to,
@@ -296,6 +303,7 @@ class Assistant:
 
     # ---------------- почта ----------------
     def process_inbox(self) -> dict:
+        self.writer.learn_pending()             # правки руководителя в карточках → правила стиля для следующих писем
         letters = self.mail.fetch_new()
         counts: dict[str, int] = {}
         for e in letters:

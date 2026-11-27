@@ -11,7 +11,7 @@ import pomoshnik.server as srv
 
 STATIC = Path(srv.__file__).resolve().parent / "static" / "cabinet"
 SECTIONS = {"today": "Сегодня", "mail": "Переписка", "meetings": "Совещания", "memory": "Память", "profile": "Профиль"}
-ENDPOINTS = ["/api/today", "/api/decisions/", "/api/mail", "/api/templates", "/discuss", "/api/meetings",
+ENDPOINTS = ["/api/today", "/api/decisions/", "/api/mail", "/api/style", "/api/style/teach", "/api/style/rules/", "/api/meetings",
              "/api/meetings/transcript", "/api/protocols", "/approve", "/reject", "/edit", "/api/tasks", "/api/memory",
              "/api/edits", "/api/profile", "/api/metrics", "/api/journal", "/lead"]
 
@@ -63,11 +63,12 @@ def test_js_uses_every_endpoint():
     assert not missing, missing
 
 
-def test_mail_groups_and_templates_labels():
+def test_mail_groups_and_style_labels():
     text = read("index.html") + read("cabinet.js")
-    for word in ("Контрагенты", "Отделы", "Рассылки", "Спам", "Шаблоны", "Входящие", "Исходящие",
-                 "Обсудить с помощником", "Сохранить"):
+    for word in ("Контрагенты", "Отделы", "Рассылки", "Спам", "Входящие", "Исходящие",
+                 "Как я пишу", "Научить помощника", "Запомнить", "Забыть"):
         assert word in text, word
+    assert '"Шаблоны"]' not in text          # TASK_14: вкладки «Шаблоны» нет — руководитель шаблоны не составляет
 
 
 def test_calendar_week_and_day_views():
