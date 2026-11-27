@@ -18,7 +18,8 @@ from yadro.journal import Journal
 from . import decisions as dq
 from .channels.telegram import Button, Update
 from .memory import brief, collapse, extract_facts, period
-from .plan import Meeting, build_day_plan, load_calendar, load_tasks, render_plan
+from .plan import (Meeting, build_day_plan, load_calendar, load_tasks, render_digest, render_morning,
+                   render_schedule)
 from .profile import Profile
 from .reports import Report, review
 from .protocol import ProtocolStore, build_protocol, questions_from_previous, render_markdown
@@ -517,20 +518,66 @@ class Assistant:
             n += 1
         return n
 
-    # ---------------- план дня ----------------
+    # ---------------- утро в Telegram блоками (TASK_15) ----------------
+    # Пит 27.11: «Целая портянка. Давай блоками в определённое время… приятные для чтения и для действия».
+    # 1) в время плана: приветствие и сразу первая карточка решения; 2) график и сроки — когда решения разобраны
+    # или через 30 минут; 3) «Сделал без вас» — ещё через 30 минут. Каждый блок раз в день, отметки — в журнале.
+    BLOCK_GAP = timedelta(minutes=30)
+
+    def _blocks_sent(self) -> dict[str, datetime]:
+        day = self.clock.now().date().isoformat()          # день отправки — настоящий, содержимое — рабочий день
+        return {x["payload"]["block"]: x["at"] for x in self.j.actions()
+                if x["kind"] == "tg_block" and x["payload"].get("day") == day}
+
+    def _block_done(self, block: str, summary: str) -> None:
+        self._log("tg_block", summary=summary, payload={"day": self.clock.now().date().isoformat(), "block": block})
+
+    def morning_tick(self) -> str | None:
+        """Вызывает цикл бота на каждом опросе. Возвращает, какой блок отправил, или None."""
+        now = self.clock.now()
+        if now.weekday() >= 5 or now.strftime("%H:%M") < self.p.plan_time:
+            return None
+        sent = self._blocks_sent()
+        if "morning" not in sent:
+            self.morning_plan(self.today())
+            return "morning"
+        if "schedule" not in sent:
+            if self.groups() and now - sent["morning"] < self.BLOCK_GAP:
+                return None
+            self._send_schedule(self.today())
+            self._block_done("schedule", "график и сроки")
+            return "schedule"
+        if "digest" not in sent and now - sent["schedule"] >= self.BLOCK_GAP:
+            items = digest_from_journal(self.j, self.p.org)[-8:]
+            if items:
+                self.pult.send_text(render_digest(items, os.environ.get("STAND_URL", "")))
+            self._block_done("digest", f"сделал без вас: {len(items)}")
+            return "digest"
+        return None
+
+    def _plan(self, day: date):
+        return build_day_plan(day, self.meetings, self.tasks)
+
     def morning_plan(self, day: date) -> int:
-        items = [f"⚠️ {r}" for r in self.risks[-3:]]
-        gs = self.groups()
-        items += [f"{x['from']}: {x['subject']}{self._times(x)} — {x['reason']}" for x in gs[:10]]
-        if len(gs) > 10:
-            items.append(f"…и ещё {len(gs) - 10}")
-        plan = build_day_plan(day, self.meetings, self.tasks, decisions=items,
-                              digest=digest_from_journal(self.j, self.p.org)[-8:])
-        text = render_plan(plan, self.p.name)
-        buttons = [[Button("Решения по одному", "dec:next")]] if self.decisions else None
-        mid = self.pult.send_buttons(text, buttons) if buttons else self.pult.send_text(text)
+        """Блок 1: приветствие, сколько решений ждут, что важно — и сразу первая карточка решения."""
+        plan, gs = self._plan(day), self.groups()
+        mid = self.pult.send_text(render_morning(plan, self.p.name, len(gs), self.risks[-3:]))
+        if gs:
+            self._next_decision()
         self._log("morning_plan", summary=f"{day.isoformat()}: встреч {len(plan.meetings)}, решений {len(gs)}")
+        self._block_done("morning", f"доброе утро: решений {len(gs)}")
         return mid
+
+    def _send_schedule(self, day: date, *, with_decisions: bool = False) -> int:
+        """Блок 2: встречи по времени (какие ведёт аватар) и сроки словами."""
+        from .lead import avatar_leads, default_categories, lead_overrides
+        plan = self._plan(day)
+        ov, cats = lead_overrides(self.j), default_categories()
+        text = render_schedule(plan, {m.uid for m in plan.meetings if avatar_leads(m, ov, cats)})
+        n = len(self.groups())
+        if with_decisions and n:
+            return self.pult.send_buttons(text, [[Button(f"Решения по одному ({n})", "dec:next")]])
+        return self.pult.send_text(text)
 
     @staticmethod
     def _times(g: dict) -> str:
@@ -785,7 +832,7 @@ class Assistant:
             self.pult.send_text(self.recall(m.group(1)))
             return
         if cmd in ("/plan", "план"):
-            self.morning_plan(self.today())
+            self._send_schedule(self.today(), with_decisions=True)
         elif cmd in ("/pochta", "почта"):
             c = self.process_inbox()
             self.pult.send_text("Почта разобрана: " + (", ".join(f"{k} {v}" for k, v in c.items()) or "новых писем нет"))

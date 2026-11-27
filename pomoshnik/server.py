@@ -229,7 +229,6 @@ class Stand:
         pult = TelegramPult(token, chat)
         self.pult.target = pult
         self.status["bot"] = "работает"
-        last_plan_day = None
         while True:
             try:
                 for u in pult.poll(timeout=25):
@@ -244,11 +243,8 @@ class Stand:
                         except TelegramError:
                             pass
                 self.status["last_poll"] = datetime.now(TZ_EKB).isoformat(timespec="seconds")
-                now = datetime.now(TZ_EKB)
-                if now.strftime("%H:%M") >= self.profile.plan_time and last_plan_day != now.date() and now.weekday() < 5:
-                    last_plan_day = now.date()
-                    with self.lock:
-                        self.assistant.morning_plan(self.assistant.today())
+                with self.lock:                  # утро блоками: приветствие с решениями, график, сводка (TASK_15)
+                    self.assistant.morning_tick()
             except TelegramRateLimit as e:
                 time.sleep(max(e.retry_after, 1))
             except TelegramError as e:

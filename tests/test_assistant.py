@@ -120,9 +120,8 @@ def test_morning_plan_and_decision_by_buttons(a):
     asst, _, mail = a
     asst.process_inbox()
     asst.morning_plan(date(2026, 12, 7))
-    kind, text, buttons = asst.pult.sent[-1]
-    assert "Ждут только вас" in text and buttons == ["dec:next"]
-    asst.handle(cb("dec:next"))
+    greet, card = asst.pult.sent[-2], asst.pult.sent[-1]
+    assert "Ждут только вас" in greet[1] and card[2][0].startswith("dec:yes:")   # TASK_15: сразу первая карточка
     first = asst.decisions[0]
     assert asst.pult.sent[-1][2][0] == f"dec:yes:{first['event_id']}"
     before = len(mail.out)

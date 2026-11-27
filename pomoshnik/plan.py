@@ -125,3 +125,73 @@ def render_plan(p: DayPlan, leader: str = "") -> str:
     if p.digest:
         lines += ["", f"<b>Сводка без вашего участия ({len(p.digest)})</b>"] + [f"• {e(d)}" for d in p.digest]
     return "\n".join(lines)
+
+
+# ---------------- утро в Telegram блоками (TASK_15) ----------------
+# Пит 27.11: «Целая портянка. Давай будет присылаться блоками… сообщения приятные для чтения и для действия».
+MONTHS = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября",
+          "ноября", "декабря"]
+
+
+def plural(n: int, one: str, few: str, many: str) -> str:
+    if n % 10 == 1 and n % 100 != 11:
+        return one
+    return few if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14 else many
+
+
+def when(d: date, day: date) -> str:
+    """Срок словами: сегодня, завтра, послезавтра, иначе дата."""
+    return {0: "сегодня", 1: "завтра", 2: "послезавтра"}.get((d - day).days, d.strftime("%d.%m"))
+
+
+def render_morning(p: DayPlan, leader: str, decisions: int, risks: list[str] = ()) -> str:
+    """Блок 1: приветствие и сколько решений ждут. Сразу за ним — первая карточка решения."""
+    e = html.escape
+    first = (leader.split() or ["!"])[0]
+    lines = [f"☀️ <b>Доброе утро, {e(first)}!</b>",
+             f"<i>{WEEKDAYS[p.day.weekday()].capitalize()}, {p.day.day} {MONTHS[p.day.month - 1]}</i>", ""]
+    n = len(p.meetings)
+    lines.append(f"Сегодня {n} {plural(n, 'встреча', 'встречи', 'встреч')}, первая в {p.meetings[0].start:%H:%M}."
+                 if n else "Встреч сегодня нет.")
+    if decisions:
+        lines.append(f"<b>Ждут только вас: {decisions}.</b> Пришлю по одному — отвечайте кнопками.")
+    else:
+        lines.append("Вопросов, которые ждут только вас, нет.")
+    if risks:
+        lines += ["", "<b>Важно</b>"] + [f"⚠️ {e(r)}" for r in list(risks)[:3]]
+    lines += ["", "<i>График и сроки пришлю, как разберём решения, или через полчаса.</i>" if decisions
+              else "<i>График и сроки — следующим сообщением.</i>"]
+    return "\n".join(lines)
+
+
+def render_schedule(p: DayPlan, avatar_uids: set[str]) -> str:
+    """Блок 2: встречи по времени и сроки словами."""
+    e = html.escape
+    lines = [f"🗓 <b>График · {WEEKDAYS[p.day.weekday()]}, {p.day:%d.%m}</b>", ""]
+    if p.meetings:
+        lines += [f"<b>{m.start:%H:%M}–{m.end:%H:%M}</b>  {e(m.title)}" + ("  🤖" if m.uid in avatar_uids else "")
+                  for m in p.meetings]
+        if any(m.uid in avatar_uids for m in p.meetings):
+            lines.append("<i>🤖 — ведёт ваш ИИ-аватар, протокол пришлю после встречи</i>")
+    else:
+        lines.append("Встреч нет.")
+    lines += ["", "⏰ <b>Сроки</b>"]
+    if p.overdue:
+        lines.append("<b>Просрочено</b>")
+        lines += [f"• {e(t.task)} — {e(t.owner)}, " + (f"с {t.due:%d.%m}" if t.due < p.day else f"срок {t.due:%d.%m}")
+                  for t in p.overdue]
+    if p.due_soon:
+        lines.append("<b>Скоро</b>")
+        lines += [f"• {e(t.task)} — {e(t.owner)}, {when(t.due, p.day)}" for t in p.due_soon]
+    if not p.overdue and not p.due_soon:
+        lines.append("Просроченных и близких сроков нет.")
+    return "\n".join(lines)
+
+
+def render_digest(items: list[str], url: str = "") -> str:
+    """Блок 3: что помощник сделал без руководителя."""
+    e = html.escape
+    lines = ["✅ <b>Сделал без вас</b>", ""] + [f"• {e(x)}" for x in items]
+    if url:
+        lines += ["", f'<i>Подробности — в <a href="{e(url)}">кабинете</a></i>']
+    return "\n".join(lines)
