@@ -511,7 +511,7 @@ class Assistant:
                 if p.get(key):
                     lines.append(f"\n<b>{label}, уйдёт:</b>\n{e(p[key])}")
             if p["unverified"]:
-                lines.append(f"⚠️ Проверьте цифры: {e(', '.join(p['unverified']))}")
+                lines.append(f"⚠️ Числа нет ни в письме, ни в базе — проверьте: {e(', '.join(p['unverified']))}")
         eid = x["event_id"]
         self.pult.send_buttons("\n".join(lines),
                                [[Button("Согласовать", f"dec:yes:{eid}"), Button("Отказать", f"dec:no:{eid}")],

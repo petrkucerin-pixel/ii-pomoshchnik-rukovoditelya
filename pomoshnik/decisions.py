@@ -9,7 +9,7 @@ import re
 from datetime import date
 
 ADVICE = ("согласовать", "отказать", "нет совета")
-PREP_VERSION = 5          # подготовка старой версии не показывается и готовится заново
+PREP_VERSION = 6          # подготовка старой версии не показывается и готовится заново
 
 PREP_SYSTEM = """Ты помощник руководителя. По письму нужно решение руководителя, твоя задача — подготовить его так,
 чтобы руководитель решил одной кнопкой.
@@ -136,7 +136,7 @@ def prompt(g: dict, letter: str, srcs: list[dict], style: str, leader: str = "")
     return "\n".join(lines)
 
 
-def check(raw: dict, letter: str, srcs: list[dict]) -> dict:
+def check(raw: dict, letter: str, srcs: list[dict], count: int = 1) -> dict:
     """Проверка ответа модели кодом: факт — дословно выданный источник, совет — только с опорой на задачу, встречу
     или память, цифры черновика сверены с письмом и источниками."""
     by_id = {s["id"]: s for s in srcs}
@@ -164,7 +164,7 @@ def check(raw: dict, letter: str, srcs: list[dict]) -> dict:
     ask = str(raw.get("ask") or "").strip()[:300]
     yes = str(raw.get("draft_yes") or raw.get("draft") or "").strip()[:1500]
     no = str(raw.get("draft_no") or "").strip()[:1500]
-    known = set()
+    known = {str(count)}                     # «пишут 4-й раз» — наш счётчик, не выдумка
     for n in _NUM.findall(letter + " " + " ".join(s["text"] for s in srcs)):
         known |= {n, *re.split(r"[.,]", n), str(int(n.split(".")[0].split(",")[0]))}   # «16.12» → и «16 декабря»
     both = f"{ask} {yes} {no}"
@@ -176,4 +176,4 @@ def check(raw: dict, letter: str, srcs: list[dict]) -> dict:
 
 def prepare(llm, g: dict, letter: str, srcs: list[dict], style: str = "", leader: str = "") -> dict:
     raw = llm.complete_json(PREP_SYSTEM, prompt(g, letter, srcs, style, leader))
-    return check(raw if isinstance(raw, dict) else {}, letter, srcs)
+    return check(raw if isinstance(raw, dict) else {}, letter, srcs, g.get("count", 1))

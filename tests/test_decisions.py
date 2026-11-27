@@ -391,3 +391,10 @@ def test_card_has_ask_and_blockers_only_from_tasks_meetings_memory():
     assert p["ask"].startswith("Мария Лебедева просит отпуск")
     assert [b["source"] for b in p["blockers"]] == ["S2"] and p["facts"] == []
     assert p["advice"] == "отказать" and p["unverified"] == []          # 23.12 есть в источнике, 20–30 — в письме
+
+
+def test_repeat_count_in_text_is_not_a_suspicious_number():
+    from pomoshnik.decisions import check
+    raw = {"ask": "Клиент просит подтвердить запуск до 25 декабря (письмо пришло уже 4-й раз)",
+           "draft_yes": "Подтверждаю 25 декабря.", "draft_no": "Пока не можем, 7 дней на проверку."}
+    assert check(raw, "Подтвердите запуск до 25 декабря", [], count=4)["unverified"] == ["7"]

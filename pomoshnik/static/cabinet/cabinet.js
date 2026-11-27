@@ -222,7 +222,7 @@ function preparedBlock(p, drafts) {
     advice,
     draftField("«Согласовать» отправит", drafts.yes, p.draft_yes || p.draft),
     draftField("«Отказать» отправит", drafts.no, p.draft_no),
-    p.unverified && p.unverified.length ? el("p", "decision-warn", "Проверьте цифры: " + p.unverified.join(", ")) : null);
+    p.unverified && p.unverified.length ? el("p", "decision-warn", "Числа нет ни в письме, ни в базе — проверьте: " + p.unverified.join(", ")) : null);
 }
 
 function decisionItem(d, refresh) {
