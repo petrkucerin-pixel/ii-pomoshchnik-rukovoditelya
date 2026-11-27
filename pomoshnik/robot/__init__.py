@@ -77,6 +77,39 @@ async def _read_room(room, st: RobotState) -> dict:
     return b
 
 
+
+def present_people(st: RobotState, b: dict, name: str) -> list[str]:
+    """Кто сейчас во встрече по подписям Телемоста (кроме самого робота)."""
+    out = []
+    for n in [*st.people.values(), *(b.get("names") or [])]:
+        if n and n != name and n not in out:
+            out.append(n)
+    return out
+
+
+async def _wait_people(room, st: RobotState, name: str, until: float) -> list[str] | None:
+    """Аватар стартует, когда пришёл первый человек: так он сразу знает состав встречи по подписям
+    и не тратит минуты LiveAvatar на пустую комнату. None — никто не пришёл или робота остановили."""
+    st.status = "ждёт участников"
+    start, seen_at = time.time(), None
+    while not st.stop and time.time() < until:
+        b = await _read_room(room, st)
+        people = present_people(st, b, name)
+        if people or (b.get("count") or 0) > 1:
+            seen_at = seen_at or time.time()
+            if people and time.time() - seen_at >= 3:      # пауза: подтягиваются подписи тех, кто зашёл вместе
+                st.note("во встрече: " + ", ".join(people))
+                return people
+            if time.time() - seen_at > 20:                 # человек есть, а подписи нет — стартуем без неё
+                return people
+        if time.time() - start > NOBODY_S:
+            st.end_reason = "никто не пришёл"
+            st.note("на встречу никто не пришёл — робот выходит")
+            return None
+        await asyncio.sleep(1)
+    return None
+
+
 def transcript_text(items: list[dict], started_ms: float) -> str:
     lines = []
     for x in items:
@@ -170,12 +203,14 @@ async def run_meeting(link: str, *, name: str, token: str | None, until: float, 
         try:
             room = await join_telemost(page, link, name, st, shots_dir)
             if token:
-                st.status = "запуск аватара"
                 await asyncio.sleep(2)                 # Телемост успевает прислать список участников
-                await _read_room(room, st)
-                if callable(token):                    # сессия аватара — уже с составом встречи
-                    present = [n for n in st.people.values() if n != name]
+                present = await _wait_people(room, st, name, until)
+                if present is None:
+                    token, until = None, 0             # никто не пришёл или встречу остановили — выходим
+                elif callable(token):                  # сессия аватара — уже с составом встречи по подписям
                     token = await asyncio.to_thread(token, present)
+            if token:
+                st.status = "запуск аватара"
                 await room.evaluate("t => { window.__bridge.start(t); }", token)
             joined_at, alone_since, others_seen = time.time(), None, False
             while not st.stop and time.time() < until:
