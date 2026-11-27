@@ -167,3 +167,11 @@ def test_autopilot_sends_robot_when_meeting_has_link(env):
     ap.tick()
     done = kinds(a, "avatar_auto_done")
     assert len(done) == 1 and done[0]["payload"]["result"] == "protocol"
+
+
+def test_only_avatar_spoke_means_no_protocol(env):
+    a, clock, llm, tmp = env
+    la = FakeLA(entries=[{"role": "avatar", "transcript": "Здравствуйте! Начнём?", "relative_timestamp": 3}])
+    rm = manager(a, la, fake_runner(participants=(), reason="остановлен"), tmp)
+    rm.start(link=LINK, title="Планёрка направления", uid=UID)
+    assert kinds(a, "robot_done")[0]["payload"]["protocol_id"] is None and a.protocols.ids() == []

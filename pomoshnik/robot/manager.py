@@ -115,8 +115,8 @@ class RobotManager:
         text, source = self._transcript(st)
         a = self._a()
         pid = None
-        if text.strip():
-            people = ", ".join(sorted(st.participants)) or "не определены"
+        if "Участник:" in text:            # говорил только аватар — встречи не было, протокол не нужен
+            people =", ".join(sorted(st.participants)) or "не определены"
             body = f"Участники встречи в Телемосте: {people}\n\n{text}"
             with self.lock:
                 pid = a.new_meeting(body, self.meta["title"], datetime.now(TZ_EKB), meeting_uid=self.meta["uid"])
