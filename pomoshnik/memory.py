@@ -6,11 +6,11 @@
 from __future__ import annotations
 
 import re
-import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from yadro.db import connect
 from yadro.journal import from_db, to_db
 from yadro.quotes import check_quote
 
@@ -80,8 +80,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(body, tokenize = 'unicod
 class Memory:
     def __init__(self, path: str | Path, clock):
         self.clock = clock
-        self.conn = sqlite3.connect(str(path), check_same_thread=False)
-        self.conn.row_factory = sqlite3.Row
+        self.conn = connect(path)  # общий замок: веб, бот и роботы в разных потоках
         self.conn.executescript(_SCHEMA)
 
     def close(self):

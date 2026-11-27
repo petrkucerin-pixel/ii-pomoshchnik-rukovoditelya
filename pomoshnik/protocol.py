@@ -5,11 +5,11 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+from yadro.db import connect
 from yadro.deadlines import default_deadline, parse_deadline
 from yadro.journal import from_db, to_db
 from yadro.quotes import check_quote
@@ -173,8 +173,7 @@ CREATE TABLE IF NOT EXISTS protocol_edits (
 class ProtocolStore:
     def __init__(self, path: str | Path, clock):
         self.clock = clock
-        self.conn = sqlite3.connect(str(path), check_same_thread=False)
-        self.conn.row_factory = sqlite3.Row
+        self.conn = connect(path)  # общий замок: веб, бот и роботы в разных потоках
         self.conn.executescript(_SCHEMA)
         cols = {r[1] for r in self.conn.execute("PRAGMA table_info(protocols)")}
         if "meeting_uid" not in cols:       # базы, созданные до привязки протокола к встрече календаря

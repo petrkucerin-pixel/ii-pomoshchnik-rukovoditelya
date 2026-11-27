@@ -5,11 +5,11 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 
 from .clock import Clock
+from .db import connect
 
 ACTORS = {"assistant", "human", "system"}
 
@@ -62,8 +62,7 @@ def from_db(raw: str | None, tz) -> datetime | None:
 class Journal:
     def __init__(self, path: str | Path, clock: Clock):
         self.clock = clock
-        self.conn = sqlite3.connect(str(path), check_same_thread=False)  # стенд: веб и бот в разных потоках
-        self.conn.row_factory = sqlite3.Row
+        self.conn = connect(path)  # общий замок: веб, бот и роботы в разных потоках
         self.conn.executescript(_SCHEMA)
         self.conn.commit()
 

@@ -183,7 +183,7 @@ def test_several_meetings_at_once_up_to_the_limit(env, monkeypatch):
     with pytest.raises(RuntimeError, match="предел"):
         rm.start(link=LINK + "2", title="Третья", uid="m3")
     assert rm.stop("m1") and wait_until(lambda: not rm.is_running("m1"))
-    assert rm.is_running("m2")                                         # вторая встреча идёт дальше
+    assert rm.is_running("m2"), rm.robots["m2"].st.log                 # вторая встреча идёт дальше
     st = rm.status()
     assert st["busy"] == 1 and {r["meeting"]["uid"] for r in st["robots"]} == {"m1", "m2"}
     rm.stop("m2")

@@ -107,3 +107,12 @@ def test_transcript_fragments_are_merged_into_utterances():
     assert t.splitlines() == ["00:00:07", "ИИ-помощник: Начнём?", "00:00:11",
                               "Участник: Да, договорённости и плюс по облачному", "00:00:27", "ИИ-помощник: Первый вопрос.",
                               "00:01:00", "Участник: Нет."]
+
+
+def test_single_participant_means_no_who_answered_questions():
+    one = build_context_prompt(leader="Ивана Петрова", title="Планёрка", questions=[], open_tasks=[], style="",
+                               participants=["Пит (это Иван Петров)"])
+    assert "один человек" in one and "не переспрашивай" in one
+    many = build_context_prompt(leader="Ивана Петрова", title="Планёрка", questions=[], open_tasks=[], style="",
+                                participants=["Пит", "Оля С."])
+    assert "один человек" not in many and "не больше одного раза подряд" in many
