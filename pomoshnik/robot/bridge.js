@@ -4,18 +4,7 @@
 (() => {
   "use strict";
   const W = 640, H = 360;
-  const bridge = window.__bridge = {transcript: [], log: [], state: "init", avatarPCs: new WeakSet(), pcs: 0, levels: []};
-  const LOUD = 0.05, LOUD_HOLD_MS = 1500;     // пауза между словами короче полутора секунд
-  setInterval(() => {
-    const now = Date.now();
-    for (const x of bridge.levels) {
-      if (x.track.readyState !== "live") continue;
-      x.an.getFloatTimeDomainData(x.buf);
-      let p = 0; for (const v of x.buf) p = Math.max(p, Math.abs(v));
-      if (p > LOUD) x.loudAt = now;
-    }
-  }, 250);
-  bridge.loud = () => bridge.levels.filter(x => Date.now() - x.loudAt < LOUD_HOLD_MS).length;
+  const bridge = window.__bridge = {transcript: [], log: [], state: "init", avatarPCs: new WeakSet(), pcs: 0};
   const log = m => { bridge.log.push(new Date().toISOString().slice(11, 19) + " " + m); };
 
   let ctx = null, meetingDest = null, avatarDest = null, canvas = null, g = null, video = null;
@@ -95,9 +84,6 @@
       if (ev.track.kind !== "audio" || bridge.avatarPCs.has(pc)) return;
       const src = audio().createMediaStreamSource(new MediaStream([ev.track]));
       src.connect(meetingDest);
-      // громкость каждой дорожки отдельно: громко на двух сразу — говорят одновременно
-      const an = ctx.createAnalyser(); an.fftSize = 1024; src.connect(an);
-      bridge.levels.push({an, buf: new Float32Array(1024), loudAt: 0, track: ev.track});
       const tag = "соединение " + pcN + ", дорожка " + ev.track.id.slice(0, 8);
       log("звук участника подключён к аватару (" + tag + ")");
       ev.track.addEventListener("ended", () => log("дорожка закончилась (" + tag + ")"));

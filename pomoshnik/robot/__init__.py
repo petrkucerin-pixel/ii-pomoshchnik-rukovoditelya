@@ -36,13 +36,13 @@ _POLL = """(seen) => {
   const m = btn && btn.innerText.match(/(\\d+)/);
   const names = [...document.querySelectorAll('[class*="TextName_"]')].map(e => e.textContent.trim());
   return {state: __bridge.state, log: __bridge.log, transcript: __bridge.transcript, sessionAt: __bridge.sessionAt || 0,
-          signals: __bridge.signals.slice(seen), count: m ? Number(m[1]) : null, names,
-          loud: __bridge.loud ? __bridge.loud() : 0};
+          signals: __bridge.signals.slice(seen), count: m ? Number(m[1]) : null, names};
 }"""
 
 
 CROSSTALK_TEXT = "Коллеги, говорите, пожалуйста, по очереди — я не разберу, кто что сказал. Я дам слово каждому."
-CROSSTALK_S = 5          # сколько секунд двое и больше говорят вместе, прежде чем аватар попросит по очереди
+CROSSTALK_WINDOW_S = 10  # смотрим на последние 10 секунд
+CROSSTALK_SHARE = 0.6    # двое и больше говорят в 60% проверок окна — это перебивание, а не случайное «да»
 CROSSTALK_PAUSE_S = 60   # не чаще раза в минуту
 
 
@@ -52,22 +52,23 @@ def talking_by_vad(vad: dict, people: dict, robot_name: str) -> int:
 
 
 class Crosstalk:
-    """Говорят сразу несколько человек → пора попросить говорить по очереди.
-    Сколько говорит: по значкам голоса Телемоста или по громкости входящих дорожек — что больше.
-    Живая проверка 27.11: Телемост зажигает значок только у одного, громкость дорожек видит обоих."""
+    """Говорят сразу несколько человек (по значкам голоса Телемоста) → пора попросить говорить по очереди.
+    Значок мигает: у говорящего он гаснет на долю секунды, поэтому смотрим на окно, а не на непрерывность.
+    Громкость дорожек не годится: Телемост пересылает только самый громкий голос (диагностика 27.11)."""
 
     def __init__(self, robot_name: str):
-        self.name, self.since, self.last = robot_name, None, None
+        self.name, self.last, self.seen = robot_name, None, []
 
     def check(self, talking: int, now: float) -> bool:
-        if talking < 2:
-            self.since = None
+        self.seen = [(t, n) for t, n in self.seen if now - t <= CROSSTALK_WINDOW_S] + [(now, talking)]
+        if self.last is not None and now - self.last < CROSSTALK_PAUSE_S:
             return False
-        self.since = self.since if self.since is not None else now
-        if now - self.since < CROSSTALK_S or (self.last is not None and now - self.last < CROSSTALK_PAUSE_S):
-            return False
-        self.last, self.since = now, None
-        return True
+        span = now - self.seen[0][0]
+        share = sum(1 for _, n in self.seen if n >= 2) / len(self.seen)
+        if talking >= 2 and span >= CROSSTALK_WINDOW_S * 0.5 and share >= CROSSTALK_SHARE:
+            self.last, self.seen = now, []
+            return True
+        return False
 
 
 @dataclass
@@ -243,7 +244,7 @@ async def run_meeting(link: str, *, name: str, token: str | None, until: float, 
                 st.status = "запуск аватара"
                 await room.evaluate("t => { window.__bridge.start(t); }", token)
             joined_at, alone_since, others_seen = time.time(), None, False
-            crosstalk = Crosstalk(name)
+            crosstalk, last_talking = Crosstalk(name), 0
             while not st.stop and time.time() < until:
                 try:
                     b = await _read_room(room, st)
@@ -258,7 +259,10 @@ async def run_meeting(link: str, *, name: str, token: str | None, until: float, 
                 st.participants |= {n for n in [*b["names"], *st.people.values()] if n and n != name}
                 st.status = {"live": "аватар во встрече", "error": "ошибка аватара", "ended": "аватар отключился"}.get(
                     b["state"], st.status)
-                talking = max(talking_by_vad(st.vad, st.people, name), b.get("loud") or 0)
+                talking = talking_by_vad(st.vad, st.people, name)
+                if talking != last_talking:
+                    st.note(f"говорят сейчас: {talking}")
+                    last_talking = talking
                 if b["state"] == "live" and crosstalk.check(talking, time.time()):
                     st.note("говорят одновременно — аватар просит по очереди")
                     await room.evaluate("t => __bridge.say(t)", CROSSTALK_TEXT)
