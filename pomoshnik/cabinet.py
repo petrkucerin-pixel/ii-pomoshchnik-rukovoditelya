@@ -158,7 +158,8 @@ def meeting_short(m: Meeting, a: Assistant, plist: list[dict] | None = None, lin
     if a.p.org:
         emails = {p.name: a.p.org.email_of(p) for p in a.p.org.people}
     return {"uid": m.uid, "start": m.start.isoformat(), "end": m.end.isoformat(), "title": m.title,
-            "category": m.category, "attendees": [{"name": n, "email": emails.get(n, "")} for n in m.attendees],
+            "category": m.category, "avatar": m.avatar,
+            "attendees": [{"name": n, "email": emails.get(n, n if "@" in n else "")} for n in m.attendees],
             "protocol_id": p["id"] if p else None, "protocol_status": p["status"] if p else None,
             "link": links.get(m.uid)}
 

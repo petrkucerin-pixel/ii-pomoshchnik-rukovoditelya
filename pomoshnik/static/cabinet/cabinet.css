@@ -325,3 +325,31 @@ blockquote { border-left-color: var(--coral); color: var(--muted); font-style: i
   main { padding-bottom: calc(104px + env(safe-area-inset-bottom)); }
 }
 .row-link[aria-pressed="true"] .muted, .row-link[aria-pressed="true"] .count { color: rgba(255, 255, 255, .82); }
+
+/* ===== Совещания: календарь отдельно, страница встречи, новая встреча (TASK_10) ===== */
+.day-column { cursor: copy; }
+.day-column .event { cursor: pointer; }
+.button-ghost { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 16px; border-radius: 999px;
+  border: 1px solid var(--glass-border); background: rgba(255, 255, 255, .55); color: var(--ink); font-weight: 600;
+  font-size: .91rem; text-decoration: none; }
+.button-ghost:hover { background: rgba(255, 255, 255, .9); }
+.back-link { display: inline-flex; align-items: center; min-height: 44px; margin-bottom: 10px; color: var(--ink-2);
+  font-weight: 600; text-decoration: none; }
+.meeting-dialog { width: min(640px, calc(100vw - 24px)); max-height: calc(100vh - 40px); overflow: auto; padding: 22px;
+  border: 1px solid var(--glass-border); background: rgba(244, 247, 253, .97); color: var(--text); }
+.meeting-dialog::backdrop { background: rgba(19, 64, 126, .28); backdrop-filter: blur(3px); }
+.meeting-dialog h2 { margin-bottom: 4px; }
+.row-3 { display: grid; grid-template-columns: 1.3fr 1fr 1fr; gap: 10px; }
+.people-pick { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 6px; max-height: 260px;
+  overflow: auto; padding: 4px; }
+.pick, .check { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 6px 10px; border-radius: 12px;
+  background: rgba(255, 255, 255, .6); border: 1px solid var(--line); font-weight: 500; cursor: pointer; }
+.pick { display: grid; grid-template-columns: 20px 1fr; column-gap: 10px; align-items: center; }
+.pick input { grid-row: 1 / span 2; }
+.pick span { font-weight: 600; color: var(--ink); line-height: 1.2; }
+.pick small { grid-column: 2; color: var(--muted); font-size: .75rem; line-height: 1.2; }
+.pick input, .check input { width: 20px; min-height: 20px; height: 20px; flex: none; accent-color: var(--ink); }
+.telemost input[type=url] { margin-top: 4px; }
+@media (max-width: 600px) { .row-3 { grid-template-columns: 1fr 1fr; } .row-3 > :first-child { grid-column: 1 / -1; } }
+select { width: 100%; min-height: 44px; padding: 9px 12px; border-radius: var(--radius-s); border: 1px solid var(--line);
+  background: rgba(255, 255, 255, .78); color: var(--text); font: inherit; }

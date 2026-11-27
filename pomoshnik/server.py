@@ -358,6 +358,55 @@ def avatar_finish():
     return RedirectResponse("/#meetings", status_code=303)
 
 
+# ---------------- новая встреча из кабинета (TASK_10) ----------------
+class MeetingIn(BaseModel):
+    title: str
+    start: str                       # "YYYY-MM-DDTHH:MM", время Екатеринбурга
+    minutes: int = 30
+    category: str = "операционная"
+    attendees: list[str] = []
+    emails: list[str] = []
+    link: str = ""
+    avatar: bool = False
+
+
+@app.get("/api/people")
+def api_people():
+    org = stand.assistant.p.org
+    people = [p for p in (org.people if org else []) if p.role != "руководитель"]
+    return {"people": [{"name": p.name, "position": p.position, "email": org.email_of(p)} for p in people]}
+
+
+@app.post("/api/meetings")
+def api_meeting_create(body: MeetingIn):
+    import re
+    a = stand.assistant
+    title = body.title.strip()
+    if not title:
+        raise HTTPException(422, "нужно название встречи")
+    try:
+        start = datetime.fromisoformat(body.start).replace(tzinfo=TZ_EKB)
+    except ValueError:
+        raise HTTPException(422, "время встречи в формате 2026-12-11T17:00") from None
+    if not 5 <= body.minutes <= 480:
+        raise HTTPException(422, "длительность от 5 минут до 8 часов")
+    link = body.link.strip()
+    if link and not link.startswith("https://"):
+        raise HTTPException(422, "ссылка на встречу должна начинаться с https://")
+    names = {p.name for p in a.p.org.people} if a.p.org else set()
+    unknown = [n for n in body.attendees if n not in names]
+    if unknown:
+        raise HTTPException(422, "нет в оргструктуре: " + ", ".join(unknown))
+    bad = [e for e in body.emails if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", e.strip())]
+    if bad:
+        raise HTTPException(422, "не похоже на адрес почты: " + ", ".join(bad))
+    with stand.lock:
+        m = a.create_meeting(title=title, start=start, minutes=body.minutes, category=body.category.strip() or "операционная",
+                             attendees=body.attendees, emails=[e.strip() for e in body.emails], link=link,
+                             avatar=body.avatar)
+        return cabinet.meeting_short(m, a)
+
+
 # ---------------- робот Телемоста (TASK_11) ----------------
 class LinkIn(BaseModel):
     link: str

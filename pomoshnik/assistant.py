@@ -9,14 +9,14 @@ import os
 import json
 import re
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from yadro.journal import Journal
 
 from .channels.telegram import Button, Update
 from .memory import brief, collapse, extract_facts, period
-from .plan import build_day_plan, load_calendar, load_tasks, render_plan
+from .plan import Meeting, build_day_plan, load_calendar, load_tasks, render_plan
 from .profile import Profile
 from .reports import Report, review
 from .protocol import ProtocolStore, build_protocol, questions_from_previous, render_markdown
@@ -123,6 +123,17 @@ def decisions_from_journal(journal: Journal) -> list[dict]:
     return out
 
 
+def meetings_from_journal(journal: Journal) -> list[Meeting]:
+    """Встречи, которые руководитель назначил в кабинете (TASK_10). Календарь заказчика не меняется."""
+    out = []
+    for a in journal.actions():
+        if a["kind"] == "meeting_created":
+            pl = a["payload"]
+            out.append(Meeting(pl["uid"], datetime.fromisoformat(pl["start"]), datetime.fromisoformat(pl["end"]),
+                               pl["title"], pl["category"], tuple(pl["attendees"]), bool(pl.get("avatar"))))
+    return out
+
+
 class Assistant:
     def __init__(self, profile: Profile, llm, pult, mailbox, journal: Journal, protocols: ProtocolStore, *,
                  calendar_path: str | Path, tasks_path: str | Path, outbox_mailbox=None, memory=None):
@@ -130,7 +141,7 @@ class Assistant:
         self.memory = memory
         self.send_mail = outbox_mailbox or mailbox
         self.j, self.protocols = journal, protocols
-        self.meetings = load_calendar(calendar_path)
+        self.meetings = sorted(load_calendar(calendar_path) + meetings_from_journal(journal), key=lambda m: m.start)
         self.tasks = load_tasks(tasks_path)
         self.pending: Pending | None = None
         self.decisions: list[dict] = decisions_from_journal(journal)   # письма, которые ждут руководителя
@@ -142,6 +153,26 @@ class Assistant:
     @property
     def clock(self):
         return self.j.clock
+
+    def create_meeting(self, *, title: str, start: datetime, minutes: int, category: str, attendees: list[str],
+                       emails: list[str], link: str = "", avatar: bool = False) -> Meeting:
+        """Новая встреча из кабинета: в календарь, приглашения участникам, ссылка Телемоста, аватар по желанию."""
+        import uuid
+        m = Meeting(f"new-{uuid.uuid4().hex[:10]}@pomoshnik", start, start + timedelta(minutes=minutes), title,
+                    category, tuple([*attendees, *emails]), avatar)
+        self._log("meeting_created", actor="human", path="now", summary=f"{title} {start:%d.%m %H:%M}",
+                  payload={"uid": m.uid, "title": title, "start": start.isoformat(), "end": m.end.isoformat(),
+                           "category": category, "attendees": list(m.attendees), "avatar": avatar})
+        if link:
+            from .robot.manager import set_link
+            set_link(self.j, m.uid, link)
+        self.meetings = sorted([*self.meetings, m], key=lambda x: x.start)
+        org = self.p.org
+        to = [org.email_of(p) for n in attendees for p in org.people if p.name == n] if org else []
+        for addr in [*to, *emails]:
+            self.send(addr, "invite", "приглашение", встреча=title, когда=f"{start:%d.%m %H:%M}",
+                      длительность=minutes, ссылка=link or "пришлю отдельно")
+        return m
 
     def today(self) -> date:
         return work_day(self.clock)

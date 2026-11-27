@@ -23,6 +23,7 @@ class Meeting:
     title: str
     category: str
     attendees: tuple[str, ...] = ()
+    avatar: bool = False          # встречу ведёт аватар — автопилот идёт на неё при любой категории
 
     @property
     def hours(self) -> float:

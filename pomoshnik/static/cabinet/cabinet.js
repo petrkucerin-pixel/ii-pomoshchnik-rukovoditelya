@@ -187,10 +187,10 @@ function taskRow(t) {
     meta(t.owner, el("span", t.overdue ? "late" : "", "до " + dateLabel(t.due)), t.status));
 }
 
-let requestedMeeting = null;
+let calendarDay = null;            // неделя календаря, к которой возвращаемся со страницы встречи
 function openMeeting(m) {
-  requestedMeeting = {day: m.start.slice(0, 10), uid: m.uid};
-  location.hash = "meetings";
+  calendarDay = m.start.slice(0, 10);
+  location.hash = "meetings/m/" + encodeURIComponent(m.uid);
 }
 
 function decisionItem(d, refresh) {
@@ -425,8 +425,7 @@ function meetingLanes(items) {
 }
 
 function meetingButton(m, select, classes, ...children) {
-  const b = button(el("span", "event-label", ...children), () => select(m.uid, true, m.start.slice(0, 10)),
-    classes + " " + eventColour(m));
+  const b = button(el("span", "event-label", ...children), () => openMeeting(m), classes + " " + eventColour(m));
   b.dataset.uid = m.uid;
   b.title = m.title + " · " + interval(m) + " · " + readable(m.category);
   b.setAttribute("aria-label", b.title);
@@ -460,6 +459,14 @@ function weekCalendar(data, today, select) {
   }
   for (const day of days) {
     const col = el("div", "day-column");
+    col.title = "Нажмите на свободное время, чтобы назначить встречу";
+    col.addEventListener("click", ev => {          // клик по свободному месту — новая встреча на это время
+      if (ev.target.closest(".event")) return;
+      const box = col.getBoundingClientRect();
+      const mins = first * 60 + (ev.clientY - box.top) / box.height * (last - first) * 60;
+      const slot = Math.max(first * 60, Math.min(last * 60 - 30, Math.floor(mins / 30) * 30));
+      newMeetingDialog(day, String(Math.floor(slot / 60)).padStart(2, "0") + ":" + String(slot % 60).padStart(2, "0"));
+    });
     for (const f of data.focus.filter(f => f.start.startsWith(day))) {
       const block = el("div", "focus-block", el("span", "", f.title));
       block.title = f.title + " · " + interval(f);
@@ -554,7 +561,7 @@ function telemostBlock(m) {
   link.placeholder = "Ссылка вида telemost.yandex.ru/j/…";
   link.value = m.link || "";
   const error = feedback(), status = hint("");
-  const box = el("div", "stack telemost", el("h3", "", "Телемост"), field("Ссылка на комнату", link), error);
+  const box = el("div", "stack telemost", field("Ссылка на комнату", link), error);
   async function showStatus() {
     const r = await api("/api/robot");
     status.textContent = r.state === "idle" ? "Робот свободен. В начале встречи он зайдёт сам, если ссылка сохранена." :
@@ -577,90 +584,78 @@ function telemostBlock(m) {
   return box;
 }
 
-function meetingsPage(host) {
-  const requested = requestedMeeting;
-  requestedMeeting = null;
+// ---- Совещания: календарь отдельно, встреча — своя страница, новая встреча кликом по слоту ----
+const CATEGORIES = [["операционная", "Операционная"], ["один_на_один", "Один на один"], ["клиент", "Клиент"],
+  ["партнёр", "Партнёр"], ["руководство", "Руководство"], ["деньги", "Деньги"]];
+let peopleCache = null;
+
+function newMeetingDialog(day, at) {
+  const dlg = el("dialog", "t-card meeting-dialog");
+  const title = el("input"), date = el("input"), start = el("input"), minutes = el("select"), category = el("select");
+  const emails = el("input"), link = el("input"), avatar = el("input"), error = feedback();
+  title.required = true;
+  title.placeholder = "Например: Разбор КП «ТехноСтрой»";
+  date.type = "date"; date.value = day;
+  start.type = "time"; start.value = at; start.step = 300;
+  for (const m of [15, 30, 45, 60, 90, 120]) {
+    const o = el("option", "", m + " мин"); o.value = m; if (m === 30) o.selected = true; minutes.append(o);
+  }
+  for (const [v, t] of CATEGORIES) { const o = el("option", "", t); o.value = v; category.append(o); }
+  emails.placeholder = "Адреса через запятую — для тех, кого нет в оргструктуре";
+  link.type = "url"; link.placeholder = "Ссылка на комнату Телемоста (можно позже)";
+  avatar.type = "checkbox";
+  const people = el("div", "people-pick", hint("Загрузка…"));
+  (peopleCache ? Promise.resolve(peopleCache) : api("/api/people").then(r => (peopleCache = r.people)))
+    .then(list => people.replaceChildren(...list.map(p => {
+      const box = el("input"); box.type = "checkbox"; box.value = p.name;
+      return el("label", "pick", box, el("span", "", p.name), el("small", "", p.position));
+    }))).catch(e => people.replaceChildren(el("p", "error", e.message)));
+  const form = el("form", "stack");
+  const save = formSubmit(form, "Назначить и разослать приглашения", () => submitAction(form, error, async () => {
+    const body = {title: title.value.trim(), start: date.value + "T" + start.value, minutes: Number(minutes.value),
+      category: category.value, link: link.value.trim(), avatar: avatar.checked,
+      attendees: [...people.querySelectorAll("input:checked")].map(x => x.value),
+      emails: emails.value.split(/[,;\s]+/).map(x => x.trim()).filter(Boolean)};
+    if (!body.title) throw new Error("Назовите встречу.");
+    const m = await api("/api/meetings", "POST", body);
+    dlg.close();
+    announce("Встреча назначена, приглашения разосланы");
+    openMeeting(m);
+  }));
+  save.classList.add("primary");
+  const cancel = button("Отмена", () => dlg.close(), "quiet");
+  form.append(el("h2", "", "Новая встреча"), field("Название", title),
+    el("div", "row-3", field("День", date), field("Начало", start), field("Длительность", minutes)),
+    field("Категория", category), el("div", "field", el("span", "", "Участники"), people), field("Ещё участники", emails),
+    field("Телемост", link), el("label", "check", avatar, el("span", "", "Встречу ведёт ИИ-аватар — зайдёт в Телемост сам")),
+    error, el("div", "actions", save, cancel));
+  dlg.append(form);
+  dlg.addEventListener("close", () => dlg.remove());
+  document.body.append(dlg);
+  dlg.showModal();
+  title.focus();
+}
+
+async function mutateProtocol(id, suffix, payload) {
+  await api("/api/protocols/" + encodeURIComponent(id) + suffix, "POST", payload);
+  announce({"/approve": "Протокол утверждён и разослан", "/reject": "Протокол отклонён", "/edit": "Правка внесена"}[suffix]);
+}
+
+function backLink(text = "← Календарь") {
+  const a = el("a", "back-link", text);
+  a.href = "#meetings";
+  return a;
+}
+
+function calendarView(host) {
   load(host, async mount => {
     const {day: today} = await api("/api/today");
     if (!mount.isConnected) return;
-    let day = requested?.day || today, selected = requested?.uid, tab = "protocols", openId = null;
-    const board = el("div"), detail = el("div"), records = el("div"), tabs = el("div", "tabs");
-    const toolbar = el("div", "calendar-toolbar");
-    const calendar = el("article", "card t-card calendar", toolbar, board);
-    const transcript = transcriptForm(id => {
-      openId = id;
-      tab = "protocols";
-      refreshRecords();
-      refreshCalendar();
-      tabs.scrollIntoView();
-    });
-    mount.replaceChildren(calendar, detail, el("div", "card t-card", tabs, records),
-      card("Расшифровка → протокол", "file", transcript.form));
-    const pending = new Set();
-    async function mutate(id, suffix, payload) {
-      if (pending.has(id)) return;
-      pending.add(id);
-      try {
-        await api("/api/protocols/" + encodeURIComponent(id) + suffix, "POST", payload);
-        announce({"/approve": "Протокол утверждён", "/reject": "Протокол отклонён", "/edit": "Правка внесена"}[suffix]);
-        openId = id;
-        refreshRecords();
-        refreshCalendar();
-      } finally {
-        pending.delete(id);
-      }
-    }
-    function refreshRecords() {
-      tabs.replaceChildren(...[["protocols", "Протоколы"], ["tasks", "Задачи"]].map(([key, title]) =>
-        toggle(title, key === tab, () => { tab = key; refreshRecords(); })));
-      load(records, async area => {
-        if (tab === "tasks") {
-          const {tasks} = await api("/api/tasks");
-          area.replaceChildren(rows(tasks, taskRow, "Задач пока нет."));
-        } else {
-          const {protocols} = await api("/api/protocols");
-          area.replaceChildren(rows(protocols, p => {
-            const item = fold(el("span", "summary-body", el("strong", "", p.title),
-              el("small", "", stamp(p.meeting_end) + " · " + p.status)), protocolView(p, mutate));
-            item.open = p.id === openId;
-            return item;
-          }, "Протоколов пока нет."));
-        }
-      });
-    }
-    function select(uid, scroll = false, selectedDay = day) {
-      selected = uid;
-      day = selectedDay;
-      board.querySelectorAll("[data-uid]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.uid === uid)));
-      if (!uid) { detail.replaceChildren(); return; }
-      load(detail, async area => {
-        const d = await api("/api/meetings/" + encodeURIComponent(uid));
-        const m = d.meeting;
-        const avatar = el("a", "button", "Аватар на встречу", icon("arrow"));
-        avatar.href = "/avatar?" + new URLSearchParams({title: m.title, uid: m.uid});
-        const info = card(m.title, "meetings",
-          meta(stamp(m.start) + "–" + time(m.end), badge(readable(m.category))),
-          el("h3", "", "Участники"), bullets(m.attendees.map(a => a.name || a.email), "Участники не указаны."),
-          el("div", "actions", avatar, button("Добавить расшифровку", () => transcript.link(m))),
-          telemostBlock(m),
-          el("h3", "", "Протокол"), d.protocol ? protocolView(d.protocol, mutate) : hint("Протокола пока нет."),
-          el("h3", "", "Вопросы по прошлому протоколу"), bullets(d.previous_questions, "Вопросов нет."),
-          el("h3", "", "Вопросы из истории"), bullets(d.history_questions, "Вопросов нет."),
-          el("h3", "", "Задачи участников"), rows(d.tasks, taskRow, "Открытых задач нет."));
-        area.replaceChildren(info);
-        if (scroll && area.isConnected) {
-          info.tabIndex = -1;
-          info.focus({preventScroll: true});
-          info.scrollIntoView();
-        }
-      });
-    }
-    function move(next) {
-      day = next;
-      selected = null;
-      refreshCalendar();
-    }
-    function refreshCalendar() {
+    let day = calendarDay || today;
+    const board = el("div"), toolbar = el("div", "calendar-toolbar");
+    mount.replaceChildren(el("article", "card t-card calendar", toolbar, board));
+    function move(next) { day = calendarDay = next; refresh(); }
+    function refresh() {
       const daily = phone.matches, start = daily ? day : monday(day), step = daily ? 1 : 7;
       const fullDate = {day: "numeric", month: "long", year: "numeric"};
       const label = daily ? dateLabel(day, {...fullDate, weekday: "short"}) :
@@ -669,22 +664,72 @@ function meetingsPage(host) {
       const next = button("›", () => move(shiftDay(day, step)), "arrow-button");
       prev.setAttribute("aria-label", daily ? "Предыдущий день" : "Предыдущая неделя");
       next.setAttribute("aria-label", daily ? "Следующий день" : "Следующая неделя");
-      toolbar.replaceChildren(el("div", "", el("span", "view-label", daily ? "День" : "Неделя"), el("h2", "", label)),
-        el("div", "actions", prev, button("Сегодня", () => move(today)), next));
-      detail.replaceChildren();
+      const add = button("+ Новая встреча", () => newMeetingDialog(day, "10:00"), "primary");
+      const protocols = el("a", "button-ghost", "Протоколы"); protocols.href = "#meetings/protocols";
+      const tasks = el("a", "button-ghost", "Задачи"); tasks.href = "#meetings/tasks";
+      toolbar.replaceChildren(el("div", "", el("span", "view-label", daily ? "День" : "Неделя"), el("h2", "", label),
+        hint(daily ? "Нажмите на встречу, чтобы открыть её" : "Нажмите на встречу, чтобы открыть её, или на свободное время — чтобы назначить новую")),
+        el("div", "actions", prev, button("Сегодня", () => move(today)), next, add, protocols, tasks));
       load(board, async area => {
         const data = await api("/api/meetings?" + new URLSearchParams({start, days: step}));
         if (!area.isConnected) return;
-        area.replaceChildren(daily ? dayCalendar(data, day, select) : weekCalendar(data, today, select));
-        const visible = data.meetings.filter(m => !daily || m.start.startsWith(day));
-        const choice = visible.find(m => m.uid === selected) || visible.find(m => m.start.startsWith(day)) || visible[0];
-        select(choice?.uid);
+        area.replaceChildren(daily ? dayCalendar(data, day, () => {}) : weekCalendar(data, today, () => {}));
       });
     }
-    phone.onchange = refreshCalendar;
-    refreshCalendar();
-    refreshRecords();
+    phone.onchange = refresh;
+    refresh();
   });
+}
+
+function meetingView(host, uid) {
+  const transcript = transcriptForm(id => { announce("Черновик протокола №" + id + " готов"); meetingView(host, uid); });
+  load(host, async mount => {
+    const d = await api("/api/meetings/" + encodeURIComponent(uid));
+    const m = d.meeting;
+    calendarDay = m.start.slice(0, 10);
+    document.title = m.title + " · Кабинет руководителя";
+    const avatarWin = el("a", "button-ghost", "Аватар в окне браузера", icon("arrow"));
+    avatarWin.href = "/avatar?" + new URLSearchParams({title: m.title, uid: m.uid});
+    const refresh = () => meetingView(host, uid);
+    const mutate = async (id, suffix, payload) => { await mutateProtocol(id, suffix, payload); refresh(); };
+    const head = card(m.title, "meetings",
+      meta(dateLabel(m.start, {weekday: "long", day: "numeric", month: "long"}) + ", " + interval(m),
+        badge(readable(m.category)), m.avatar ? badge("ведёт ИИ-аватар") : null),
+      el("h3", "", "Участники"), bullets(m.attendees.map(a => a.name || a.email), "Участники не указаны."));
+    const telemost = card("Телемост и аватар", "focus", telemostBlock(m), el("div", "actions", avatarWin));
+    const protocol = card("Протокол", "file", d.protocol ? protocolView(d.protocol, mutate) : hint("Протокола пока нет."),
+      fold("Добавить расшифровку вручную", transcript.form));
+    transcript.link(m);
+    const prep = card("Подготовка к встрече", "list",
+      el("h3", "", "Вопросы по прошлому протоколу"), bullets(d.previous_questions, "Вопросов нет."),
+      el("h3", "", "Вопросы из истории"), bullets(d.history_questions, "Вопросов нет."),
+      el("h3", "", "Задачи участников"), rows(d.tasks, taskRow, "Открытых задач нет."));
+    mount.replaceChildren(backLink(), el("div", "dashboard", stack(head, protocol), stack(telemost, prep)));
+  });
+}
+
+function protocolsView(host) {
+  load(host, async mount => {
+    const {protocols} = await api("/api/protocols");
+    const again = () => protocolsView(host);
+    mount.replaceChildren(backLink(), card("Протоколы встреч", "file", rows(protocols, p => fold(
+      el("span", "summary-body", el("strong", "", p.title), el("small", "", stamp(p.meeting_end) + " · " + p.status)),
+      protocolView(p, async (id, s, b) => { await mutateProtocol(id, s, b); again(); })), "Протоколов пока нет.")));
+  });
+}
+
+function tasksView(host) {
+  load(host, async mount => {
+    const {tasks} = await api("/api/tasks");
+    mount.replaceChildren(backLink(), card("Задачи и сроки", "list", rows(tasks, taskRow, "Задач пока нет.")));
+  });
+}
+
+function meetingsPage(host, sub = "") {
+  if (sub.startsWith("m/")) return meetingView(host, decodeURIComponent(sub.slice(2)));
+  if (sub === "protocols") return protocolsView(host);
+  if (sub === "tasks") return tasksView(host);
+  return calendarView(host);
 }
 
 function memoryPage(host) {
@@ -744,8 +789,9 @@ function profilePage(host) {
 const pages = {today: todayPage, mail: mailPage, meetings: meetingsPage, memory: memoryPage, profile: profilePage};
 function route() {
   const hash = location.hash.slice(1);
-  const key = Object.hasOwn(pages, hash) ? hash : "today";
-  if (hash !== key) history.replaceState(null, "", "#" + key);
+  const head = hash.split("/")[0], sub = hash.slice(head.length + 1);
+  const key = Object.hasOwn(pages, head) ? head : "today";
+  if (head !== key) history.replaceState(null, "", "#" + key);
   phone.onchange = null;
   document.querySelectorAll("nav a").forEach(a => {
     if (a.hash === "#" + key) a.setAttribute("aria-current", "page");
@@ -760,7 +806,7 @@ function route() {
     const host = el("div");
     if (key !== "today") section.append(el("div", "page-title", el("h1", "", title)));
     section.append(host);
-    pages[key](host);
+    pages[key](host, key === head ? sub : "");
   }
   window.scrollTo(0, 0);
 }

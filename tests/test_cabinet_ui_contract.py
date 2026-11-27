@@ -96,3 +96,9 @@ def test_phone_layout_rules():
 def test_js_syntax():
     r = subprocess.run(["node", "--check", str(STATIC / "cabinet.js")], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
+
+
+def test_meetings_calendar_alone_meeting_page_and_new_meeting_by_slot():
+    js = read("cabinet.js")
+    assert "meetings/m/" in js and "#meetings/protocols" in js and "#meetings/tasks" in js   # встреча — своя страница
+    assert "Новая встреча" in js and "/api/people" in js and 'addEventListener("click"' in js   # клик по слоту

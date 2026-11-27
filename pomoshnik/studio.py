@@ -82,7 +82,7 @@ class Autopilot:
 
     def _meetings(self, a: Assistant):
         day = a.today()
-        return [m for m in a.meetings if m.start.date() == day and m.category in self.categories]
+        return [m for m in a.meetings if m.start.date() == day and (m.category in self.categories or m.avatar)]
 
     def _marks(self, a: Assistant) -> tuple[dict, dict]:
         day = a.today().isoformat()

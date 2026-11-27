@@ -151,7 +151,7 @@ def test_decision_from_cabinet_sends_letter_and_survives_restart(env):
 def test_templates_list(env):
     c, _, _ = env
     keys = {t["key"] for t in c.get("/api/templates").json()["templates"]}
-    assert keys == {"delegate", "auto_reply", "review_question", "protocol_mail", "decision_yes", "decision_no"}
+    assert keys == {"delegate", "auto_reply", "review_question", "protocol_mail", "decision_yes", "decision_no", "invite"}
 
 
 def test_template_edit_changes_next_letter_and_is_logged(env):
@@ -238,3 +238,49 @@ def test_metrics_count_incoming_letters_only(env):
     m = c.get("/api/metrics").json()
     assert any(x["kind"] == "mail_sent" for x in a.j.actions())
     assert m["letters"] == len(ROWS) == 84
+
+
+# ---------------- новая встреча кликом по слоту (TASK_10) ----------------
+NEW = {"title": "Разбор КП «ТехноСтрой»", "start": "2026-12-11T17:00", "minutes": 45, "category": "клиент",
+       "attendees": ["Ольга Смирнова", "Мария Лебедева"], "emails": ["pit@example.org"],
+       "link": "https://telemost.yandex.ru/j/123", "avatar": True}
+
+
+def test_create_meeting_shows_in_calendar_and_sends_invites(env):
+    c, a, _ = env
+    r = c.post("/api/meetings", json=NEW)
+    assert r.status_code == 200, r.text
+    m = r.json()
+    assert m["title"] == NEW["title"] and m["start"].startswith("2026-12-11T17:00") and m["end"].startswith("2026-12-11T17:45")
+    week = c.get("/api/meetings", params={"start": "2026-12-07", "days": 7}).json()["meetings"]
+    assert m["uid"] in [x["uid"] for x in week]
+    card = c.get(f"/api/meetings/{m['uid']}").json()["meeting"]
+    assert card["link"] == NEW["link"] and card["avatar"] is True
+    assert {x["name"] for x in card["attendees"]} == {"Ольга Смирнова", "Мария Лебедева", "pit@example.org"}
+    inv = [x for x in letters(c, direction="out") if x["category"] == "приглашение"]
+    assert {x["to_email"] for x in inv} == {"p02@company.example", "p06@company.example", "pit@example.org"}
+    assert all(NEW["link"] in x["body"] and "11.12 17:00" in x["body"] for x in inv)
+    srv.stand.restart_assistant()                                         # после перезапуска стенда встреча на месте
+    assert m["uid"] in [x.uid for x in srv.stand.assistant.meetings]
+
+
+@pytest.mark.parametrize("bad", [{"title": " "}, {"start": "завтра"}, {"minutes": 2}, {"link": "ftp://x"},
+                                 {"attendees": ["Марсианин"]}, {"emails": ["не-адрес"]}])
+def test_create_meeting_validation(env, bad):
+    c, _, _ = env
+    r = c.post("/api/meetings", json=NEW | bad)
+    assert r.status_code == 422
+
+
+def test_avatar_flag_brings_robot_whatever_category(env):
+    c, a, _ = env
+    m = c.post("/api/meetings", json=NEW | {"category": "клиент"}).json()
+    ap = srv.stand.autopilot
+    assert m["uid"] in [x.uid for x in ap._meetings(a)]
+
+
+def test_people_for_meeting_form(env):
+    c, _, _ = env
+    people = c.get("/api/people").json()["people"]
+    assert {"name": "Ольга Смирнова", "position": "Директор по продажам SMB", "email": "p02@company.example"} in people
+    assert all(p["name"] != "Иван Петров" for p in people)                 # руководитель приглашает, а не приглашается
