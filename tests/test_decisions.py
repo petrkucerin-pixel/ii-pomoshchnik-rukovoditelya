@@ -400,8 +400,13 @@ def test_repeat_count_in_text_is_not_a_suspicious_number():
     assert check(raw, "Подтвердите запуск до 25 декабря", [], count=4)["unverified"] == ["7"]
 
 
-def test_digest_survives_restart(a):
+def test_digest_is_only_what_assistant_did_without_repeats(a):
+    from pomoshnik.assistant import digest_from_journal
     asst, _, tmp_path = a
-    assert asst.digest
+    d = digest_from_journal(asst.j, asst.p.org)
+    assert d and any(x.startswith("Передал ") for x in d)
+    assert not any("Ждёт вашего" in x or x.startswith("Риск по цели") for x in d)   # это не действия помощника
+    assert len(d) == len(set(d)) and any("(×" in x for x in d)                      # копии склеены
+    assert ACCESS not in " ".join(d)                                                # доступ ещё не передан
     b = again(asst, tmp_path)
-    assert b.digest[-8:] == asst.digest[-8:] and any(x.startswith("Передано ") for x in b.digest)
+    assert digest_from_journal(b.j, b.p.org) == d                                   # переживает перезапуск

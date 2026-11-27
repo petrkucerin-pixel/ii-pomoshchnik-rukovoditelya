@@ -132,3 +132,17 @@ def test_parse_json_with_fences_and_text():
 def test_cost_known_and_unknown_model():
     assert cost_usd("deepseek-flash", 1_000_000, 1_000_000) == pytest.approx(1.5)
     assert cost_usd("local-model", 1000, 1000) == 0.0
+
+
+# --- служебные письма: никому не пересылаем (стенд 27.11: уведомление Яндекса о пароле ушло ассистенту) ---
+@pytest.mark.parametrize("email", ["noreply@id.yandex.ru", "no-reply@accounts.google.com", "mailer-daemon@mx.example",
+                                   "notifications@github.com"])
+@pytest.mark.parametrize("category", ["доступы", "продажи", "календарь", "клиенты"])
+def test_service_notifications_are_never_forwarded_or_answered(ivan, email, category):
+    d = decide(ivan, category, email)
+    assert d.action == "в_сводку" and "служебн" in d.reason
+
+
+def test_external_access_request_is_not_forwarded(ivan):
+    d = decide(ivan, "доступы", "someone@partner.example")
+    assert d.action != "делегировать"

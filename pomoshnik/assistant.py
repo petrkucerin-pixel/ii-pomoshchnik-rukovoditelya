@@ -187,24 +187,41 @@ def protocol_tasks(journal: Journal) -> list[dict]:
 
 
 def digest_from_journal(journal: Journal, org=None) -> list[str]:
-    """Сводка «что помощник сделал сам» из журнала — те же строки, что пишутся по ходу работы."""
-    out = []
+    """Сводка «что помощник сделал сам»: только его действия, глаголом. Что ждёт руководителя и риски — в своих
+    разделах, сюда не попадают. Копии одного письма — одна строка с числом раз."""
+    lines: list[str] = []
     for a in journal.actions():
         k, pl = a["kind"], a["payload"] or {}
         if k in ("mail_делегировать", "mail_авто", "mail_в_сводку"):
             ev = (journal.event(a["event_id"]) or {}).get("payload") or {} if a["event_id"] else {}
             subj = ev.get("subject") or a["summary"].split(" — ", 1)[0]
+            frm = ev.get("from_name") or ev.get("from") or ""
             if k == "mail_делегировать":
+                if pl.get("after"):
+                    continue                     # ещё не передано: ждёт кадрового решения руководителя
                 who = org.by_id.get(pl.get("delegate_to")) if org else None
-                out.append(f"Ждёт вашего кадрового решения, потом уйдёт исполнителю: {subj}" if pl.get("after")
-                           else f"Передано {who.name if who else 'исполнителю'}: {subj}")
+                lines.append(f"Передал «{subj}» ({frm}) → {who.name if who else 'исполнителю'}")
             elif k == "mail_авто":
-                out.append(f"Подтверждено автоматически: {subj}")
+                lines.append(f"Ответил «принято»: «{subj}» ({frm})")
+            elif "служебн" in (pl.get("reason") or ""):
+                lines.append(f"Служебное уведомление «{subj}» — никому не пересылал")
             else:
-                out.append(f"{ev.get('from_name', '')}: {pl.get('summary') or subj}".lstrip(": "))
-        elif k in ("report_review", "task_unblocked"):
-            out.append(a["summary"])
-    return out
+                lines.append(f"Прочитал: {frm} — {pl.get('summary') or subj}")
+        elif k == "delegation_released" and pl.get("verdict") == "yes":
+            lines.append(f"После вашего решения передал: {a['summary'].split(': ', 1)[-1]}")
+        elif k == "report_review" and pl.get("kind") != "риск_цели":
+            lines.append(a["summary"])
+        elif k == "task_unblocked":
+            lines.append(a["summary"])
+    counts: dict[str, int] = {}
+    for x in lines:
+        counts[x] = counts.get(x, 0) + 1
+    out, seen = [], set()
+    for x in reversed(lines):                    # порядок по последнему разу
+        if x not in seen:
+            seen.add(x)
+            out.append(x + (f" (×{counts[x]})" if counts[x] > 1 else ""))
+    return list(reversed(out))
 
 
 def prepared_from_journal(journal: Journal) -> dict[str, dict]:
@@ -507,7 +524,8 @@ class Assistant:
         items += [f"{x['from']}: {x['subject']}{self._times(x)} — {x['reason']}" for x in gs[:10]]
         if len(gs) > 10:
             items.append(f"…и ещё {len(gs) - 10}")
-        plan = build_day_plan(day, self.meetings, self.tasks, decisions=items, digest=self.digest[-8:])
+        plan = build_day_plan(day, self.meetings, self.tasks, decisions=items,
+                              digest=digest_from_journal(self.j, self.p.org)[-8:])
         text = render_plan(plan, self.p.name)
         buttons = [[Button("Решения по одному", "dec:next")]] if self.decisions else None
         mid = self.pult.send_buttons(text, buttons) if buttons else self.pult.send_text(text)

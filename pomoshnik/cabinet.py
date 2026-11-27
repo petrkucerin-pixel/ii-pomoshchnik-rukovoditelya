@@ -11,7 +11,7 @@ from urllib.parse import urlencode
 
 from yadro.journal import from_db
 
-from .assistant import Assistant, meeting_brief, protocol_tasks
+from .assistant import Assistant, digest_from_journal, meeting_brief, protocol_tasks
 from .memory import collapse, period, topics
 from .metrics import compute_metrics
 from .plan import Meeting, TaskRow, build_day_plan, focus_windows
@@ -235,7 +235,7 @@ def today(a: Assistant, protocols) -> dict:
             "overdue": [task_dict(t, day) for t in plan.overdue],
             "due_soon": [task_dict(t, day) for t in plan.due_soon],
             "focus": _focus(a.meetings, day),
-            "digest": a.digest[-8:]}
+            "digest": digest_from_journal(a.j, a.p.org)[-10:]}
 
 
 # ---------------- совещания и протоколы ----------------

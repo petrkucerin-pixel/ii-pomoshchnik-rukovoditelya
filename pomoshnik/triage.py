@@ -1,12 +1,16 @@
 """Разбор письма: модель определяет категорию и суть, код решает действие по правилам профиля."""
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass
 
 from .org import BOSS
 from .profile import CATEGORIES, Profile
 
 MIN_CONFIDENCE = 0.6
+_SERVICE_SENDER = re.compile(r"^(no-?reply|do-?not-?reply|mailer-daemon|postmaster|notifications?|"
+                            r"robot|bounce|alerts?|security)\b")
 
 CLASSIFY_SYSTEM = """Ты помощник руководителя и разбираешь входящее письмо.
 Верни JSON: {"category": "<одна категория из списка>", "summary": "<суть в одной строке до 120 знаков>", "confidence": <0..1>}
@@ -56,6 +60,13 @@ def decide(profile: Profile, category: str, from_email: str, *, summary: str = "
     if category == "спам" and not sender:      # спам игнорируем при любых правилах профиля
         return Decision("игнорировать", category, "спам — руководителю не показываем", summary=summary,
                         confidence=confidence, sender_role=role)
+    if not sender and _SERVICE_SENDER.search((from_email or "").split("@")[0].lower()):
+        # Уведомления сервисов (пароли, входы, рассылки систем) никому не пересылаем и не отвечаем — только в сводку.
+        return Decision("в_сводку", category, "служебное уведомление — никому не пересылаю, не отвечаю",
+                        summary=summary, confidence=confidence, sender_role=role)
+    if category == "доступы" and not sender:
+        return Decision("спросить_руководителя", category, "запрос доступа от внешнего отправителя",
+                        summary=summary, confidence=confidence, sender_role=role)
     if sender and sender.role == BOSS:
         return Decision("спросить_руководителя", category, f"письмо от руководителя руководителя ({sender.name})",
                         summary=summary, confidence=confidence, sender_role=role)
