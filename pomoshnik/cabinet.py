@@ -69,64 +69,12 @@ class Grouper:
             "клиент" if category in CLIENT_CATEGORIES else "контрагент"
 
 
-def _letter_status(a: Assistant, act: dict | None, ap: dict, verdicts: dict, held: set, released: dict,
-                   deferred: dict) -> dict:
-    """Что с письмом — одной плашкой: you — ждёт руководителя, wait — ждёт его решения по другому вопросу,
-    done — помощник (или руководитель) уже сделал, info — для сведения, ничего делать не нужно."""
-    if not act:
-        return {"kind": "info", "label": "Ещё не разобрано"}
-    kind, eid = act["kind"].removeprefix("mail_"), act["event_id"]
-    reason = ap.get("reason") or ""
-    if kind == "спросить_руководителя":
-        v = verdicts.get(eid)
-        if v == "yes":
-            return {"kind": "done", "label": "Вы согласовали — ответ отправлен"}
-        if v == "no":
-            return {"kind": "done", "label": "Вы отказали — ответ отправлен"}
-        until = deferred.get(eid)
-        if until:
-            return {"kind": "you", "label": f"Ждёт вашего решения · отложено до {until:%d.%m %H:%M}"}
-        return {"kind": "you", "label": "Ждёт вашего решения"}
-    if kind == "делегировать":
-        who = a.p.org.by_id.get(ap.get("delegate_to")) if a.p.org else None
-        name = who.name if who else "исполнителю"
-        if eid in held and eid not in released:
-            return {"kind": "wait", "label": f"Передам {name} после вашего кадрового решения"}
-        if released.get(eid) == "no":
-            return {"kind": "done", "label": "Не передано — вы отказали по связанному вопросу"}
-        return {"kind": "done", "label": f"Передал {name}"}
-    if kind == "авто":
-        return {"kind": "done", "label": "Ответил сам"}
-    if kind == "в_сводку":
-        if "ответ исполнителя" in reason:
-            return {"kind": "done", "label": "Ответ на вопрос помощника — учтён в задаче и памяти"}
-        if "служебн" in reason:
-            return {"kind": "info", "label": "Служебное уведомление — никому не пересылал"}
-        return {"kind": "info", "label": "Прочитал — в сводке"}
-    if kind == "игнорировать":
-        return {"kind": "info", "label": "Пропущено: спам" if ap.get("category") == "спам" else "Пропущено: рассылка"}
-    return {"kind": "info", "label": "Разобрано"}
-
-
 def _incoming(a: Assistant) -> list[dict]:
     rows = a.j.conn.execute("SELECT id, external_id, payload FROM events WHERE channel = 'mail' ORDER BY id").fetchall()
     acts: dict[int, dict] = {}
-    verdicts: dict[int, str] = {}
-    held: set[int] = set()
-    released: dict[int, str] = {}
     for x in a.j.actions():
-        pl = x["payload"] or {}
         if x["kind"].startswith("mail_") and x["kind"] != "mail_sent" and x["event_id"]:
             acts[x["event_id"]] = x
-            if x["kind"] == "mail_делегировать" and pl.get("after"):
-                held.add(x["event_id"])
-        elif x["kind"] == "letter_decided" and pl.get("verdict") in ("yes", "no"):
-            verdicts[x["event_id"]] = pl["verdict"]
-        elif x["kind"] == "delegation_released":
-            released[x["event_id"]] = pl.get("verdict")
-    now = a.clock.now()
-    deferred = {eid: datetime.fromisoformat(g["deferred_until"]) for g in a.groups() if g.get("deferred_until")
-                and datetime.fromisoformat(g["deferred_until"]) > now for eid in g["event_ids"]}
     out = []
     for r in rows:
         pl = json.loads(r["payload"])
@@ -139,8 +87,7 @@ def _incoming(a: Assistant) -> list[dict]:
                     "to_name": a.p.name, "to_email": pl.get("to") or "",
                     "subject": subject, "body": pl.get("body", ""),
                     "category": ap.get("category", ""), "action": act["kind"].removeprefix("mail_") if act else None,
-                    "reason": ap.get("reason") or (act["summary"].removeprefix(subject + " — ") if act else ""),
-                    "status": _letter_status(a, act, ap, verdicts, held, released, deferred)})
+                    "reason": ap.get("reason") or (act["summary"].removeprefix(subject + " — ") if act else "")})
     return out
 
 
@@ -174,10 +121,7 @@ def mail(a: Assistant) -> dict:
         x["group"], x["party"], x["party_note"] = g.classify(x["to_email"], g.external_names.get(
             x["to_email"].lower(), ""), "")
     letters = sorted(inc + out, key=lambda x: x["at"] or "")
-    kinds = [x["status"]["kind"] for x in inc]
-    counts = {"you": len(a.groups()), "you_letters": kinds.count("you"), "wait": kinds.count("wait"),
-              "done": kinds.count("done"), "info": kinds.count("info")}
-    return {"groups": GROUPS, "letters": letters, "counts": counts}
+    return {"groups": GROUPS, "letters": letters}
 
 
 # ---------------- сегодня, задачи ----------------
