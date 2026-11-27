@@ -134,6 +134,11 @@ class DeferredPult:
         if self.target:
             self.target.answer_callback(cid, text)
 
+    def download(self, file_id):
+        if not self.target:
+            raise RuntimeError("Telegram не подключён")
+        return self.target.download(file_id)
+
 
 class Stand:
     def __init__(self):
@@ -165,6 +170,8 @@ class Stand:
         a = Assistant(self.profile, self.llm, self.pult, self.mail, self.journal, self.protocols,
                       calendar_path=TASK / "calendar.ics", tasks_path=TASK / "tasks.csv", memory=self.memory)
         a.recheck_queue()                   # правила профиля могли поменяться: очередь пересматривается по новым
+        from .voice import LocalWhisper, available
+        a.transcribe = LocalWhisper() if available() else None     # голос в Telegram (TASK_16)
         return a
 
     def start_preparer(self):
@@ -234,6 +241,8 @@ class Stand:
             try:
                 for u in pult.poll(timeout=25):
                     try:
+                        if u.kind == "voice":           # Whisper — вне замка: кабинет не ждёт распознавания
+                            u = self.assistant.voice_to_text(u)
                         with self.lock:
                             self.assistant.handle(u)
                     except Exception as e:          # одна ошибка не должна ронять бота

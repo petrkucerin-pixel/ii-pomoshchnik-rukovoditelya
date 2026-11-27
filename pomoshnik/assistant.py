@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import html
+import logging
 import os
 import json
 import re
@@ -869,11 +870,160 @@ class Assistant:
                       payload={"protocol_id": t["protocol_id"], "n": t["n"], "minutes_saved": 3})
 
     # ---------------- Telegram ----------------
+    # ---------------- голос и свободный текст в Telegram (TASK_16) ----------------
+    transcribe = None                       # распознаватель голоса: стенд ставит Whisper, тесты — заглушку
+    voice_pending: dict | None = None       # решение голосом ждёт одной кнопки «Отправить»: eid → (verdict, ответ)
+    HELP = ("Можно сказать: «согласуй» или «откажи, потому что…» — по текущему вопросу; «что по Облако Плюс»; "
+            "«напомни Ольге про КП к пятнице»; «назначь планёрку завтра в 10 с Ольгой»; "
+            "«в протоколе срок второй задачи — пятница»; «план на сегодня».")
+
+    def voice_to_text(self, u: Update) -> Update:
+        """Голосовое → текст. Стенд зовёт это вне общего замка: Whisper работает секунды, кабинет не ждёт."""
+        empty = Update(u.update_id, "voice_text", u.chat_id, "", u.message_id)
+        if not self.transcribe or not hasattr(self.pult, "download"):
+            self.pult.send_text("Голосовые пока не подключены — напишите, пожалуйста, текстом.")
+            return empty
+        try:
+            heard = (self.transcribe(self.pult.download(u.file_id)) or "").strip()
+        except Exception:
+            logging.getLogger(__name__).exception("голосовое")
+            self.pult.send_text("Не получилось распознать голосовое — повторите или напишите текстом.")
+            return empty
+        if not heard:
+            self.pult.send_text("Не расслышал — повторите, пожалуйста.")
+            return empty
+        self.pult.send_text(f"🎙 <i>«{html.escape(heard)}»</i>")
+        return Update(u.update_id, "voice_text", u.chat_id, heard, u.message_id)
+
+    def act(self, text: str) -> str:
+        """Просьба своими словами: модель разбирает в действие, код проверяет и выполняет. Возвращает действие."""
+        from .intents import context_text, parse
+        gs = self._active()
+        card, proto = (gs[0] if gs else None), self._draft_protocol()
+        people = [p.name for p in self.p.org.people] if self.p.org else []
+        d = parse(self.llm, text, context_text(today=self.today(), card=card, protocol=proto, people=people))
+        getattr(self, "_act_" + d["intent"])(d, card, proto)
+        self._log("voice_intent", actor="human", path="now", summary=f"{d['intent']}: {text[:120]}",
+                  payload={"text": text, "intent": d})
+        return d["intent"]
+
+    def _draft_protocol(self) -> dict | None:
+        for pid in reversed(self.protocols.ids()):
+            rec = self.protocols.get(pid)
+            if rec and rec["status"] == "черновик":
+                return rec
+        return None
+
+    def _person(self, name: str):
+        """Человек из оргструктуры по имени, как его назвали вслух: «Ольга», «Ольге», «Смирнова». Один — или None."""
+        if not self.p.org or not name.strip():
+            return None
+        words = [w[:4].lower().replace("ё", "е") for w in name.split() if len(w) >= 3]
+        hits = [p for p in self.p.org.people if p.role != "руководитель" and words and all(
+            any(x.lower().replace("ё", "е").startswith(w) for x in p.name.split()) for w in words)]
+        return hits[0] if len(hits) == 1 else None
+
+    def _act_unknown(self, d, card, proto):
+        self.pult.send_text("Не понял. " + self.HELP)
+
+    def _act_plan(self, d, card, proto):
+        self._send_schedule(self.today(), with_decisions=True)
+
+    def _act_recall(self, d, card, proto):
+        self.pult.send_text(self.recall(str(d.get("query") or "").strip()))
+
+    def _act_decision(self, d, card, proto):
+        verdict = d.get("verdict")
+        if not card:
+            self.pult.send_text("Вопросов, которые ждут вашего решения, сейчас нет.")
+            return
+        if verdict == "later":
+            self.decide_letter(card["event_id"], "later")
+            return
+        if verdict not in ("yes", "no"):
+            self._act_unknown(d, card, proto)
+            return
+        p = card.get("prepared") or {}
+        reply = str(d.get("reply") or "").strip()
+        shown = reply or (p.get("draft_yes") or p.get("draft") if verdict == "yes" else p.get("draft_no")) or \
+            "стандартный ответ помощника"
+        eid = card["event_id"]
+        if self.voice_pending is None:
+            self.voice_pending = {}
+        self.voice_pending[eid] = (verdict, reply)
+        e = html.escape
+        # ответ уходит наружу, а голос можно расслышать не так — одна кнопка, чтобы отправить
+        self.pult.send_buttons(
+            f"<b>{'Согласовать' if verdict == 'yes' else 'Отказать'}</b>: {e(card['from'])} — {e(card['subject'])}\n\n"
+            f"<b>Уйдёт:</b>\n{e(shown)}",
+            [[Button("Отправить", f"vok:{eid}"), Button("Не то", f"vno:{eid}")]])
+
+    def _voice_confirm(self, ok: bool, eid: int):
+        pend = (self.voice_pending or {}).pop(eid, None)
+        if not ok:
+            self.pult.send_text("Хорошо, не отправляю. Скажите ещё раз или ответьте кнопками в карточке.")
+            return
+        if pend is None:
+            self.pult.send_text("Подтверждение устарело — скажите, пожалуйста, ещё раз.")
+            return
+        verdict, reply = pend
+        if not self.decide_letter(eid, verdict, text=reply or None):
+            self.pult.send_text("Этот вопрос уже решён.")
+
+    def _act_assign(self, d, card, proto):
+        from yadro.deadlines import parse_deadline
+        who = self._person(str(d.get("person") or ""))
+        what = str(d.get("what") or "").strip().rstrip(".")
+        if not who or not what:
+            self.pult.send_text(f"Не нашёл «{html.escape(str(d.get('person') or ''))}» в оргструктуре — "
+                                "скажите имя и фамилию." if not who else "Не понял, что поручить. " + self.HELP)
+            return
+        due = parse_deadline(str(d.get("due_text") or ""), self.clock.now())
+        when = f" Срок — {due.due:%d.%m}." if due else ""
+        self.send(self.p.org.email_of(who), "assign", "поручение", имя=who.name.split()[0], что=what, срок=when)
+        self._log("voice_assign", actor="human", path="now", summary=f"{who.name}: {what}{when}",
+                  payload={"person": who.name, "what": what, "due": due.due.isoformat() if due else None})
+        self.pult.send_text(f"Написал {html.escape(who.name)}: «{html.escape(what)}».{when}")
+
+    def _act_meeting(self, d, card, proto):
+        try:
+            day = date.fromisoformat(str(d.get("date")))
+            hh, mm = (int(x) for x in str(d.get("time")).split(":"))
+            start = datetime(day.year, day.month, day.day, hh, mm, tzinfo=self.clock.now().tzinfo)
+            minutes = max(15, min(int(d.get("minutes") or 30), 240))
+        except (TypeError, ValueError):
+            self.pult.send_text("Не понял дату и время встречи — скажите, например: «завтра в 10».")
+            return
+        title = str(d.get("title") or "Встреча").strip()
+        found, missed = [], []
+        for name in d.get("people") or []:
+            p = self._person(str(name))
+            (found if p else missed).append(p.name if p else str(name))
+        self.create_meeting(title=title, start=start, minutes=minutes, category="операционная", attendees=found,
+                            emails=[], link="", avatar=False)
+        e = html.escape
+        msg = f"Назначил «{e(title)}» на {start:%d.%m %H:%M}, {minutes} мин."
+        msg += f" Пригласил: {e(', '.join(found))}." if found else ""
+        msg += f" Не нашёл в оргструктуре: {e(', '.join(missed))}." if missed else ""
+        self.pult.send_text(msg + " Ссылку на Телемост добавьте в карточке встречи в кабинете.")
+
+    def _act_protocol_edit(self, d, card, proto):
+        if not proto:
+            self.pult.send_text("Протокола на утверждении сейчас нет.")
+            return
+        text = str(d.get("instruction") or "").strip()
+        p = self.protocols.apply_edit(proto["id"], text, self.llm, self.p.org)
+        self._log("protocol_edit", actor="human", path="decision", summary=text, payload={"protocol_id": proto["id"]})
+        self._send_protocol(proto["id"], p)
+
     def handle(self, u: Update) -> None:
         if u.kind == "callback":
             if u.callback_id:
                 self.pult.answer_callback(u.callback_id)
             parts = u.text.split(":")
+            if parts[0] in ("vok", "vno"):
+                self._voice_confirm(parts[0] == "vok", int(parts[1]))
+                return
             if parts[0] == "prot":
                 pid = int(parts[2])
                 if parts[1] == "ok":
@@ -892,6 +1042,12 @@ class Assistant:
                     self._decision_details(int(parts[2]))
                 else:
                     self._decide_letter(parts[1], int(parts[2]))
+            return
+        if u.kind == "voice":
+            u = self.voice_to_text(u)
+        if u.kind == "voice_text":
+            if u.text:
+                self.act(u.text)
             return
         if u.kind != "text":
             return
@@ -918,4 +1074,9 @@ class Assistant:
             self.pult.send_text("Вопросы по прошлому протоколу:\n" + "\n".join(f"• {html.escape(x)}" for x in q)
                                 if q else "Утверждённых протоколов пока нет.")
         elif cmd == "/start":
-            self.pult.send_text("Я ИИ-помощник руководителя. Команды: /plan, /pochta, /voprosy, «что по …» (/chto).")
+            self.pult.send_text("Я ИИ-помощник руководителя. Команды: /plan, /pochta, /voprosy, «что по …» (/chto). "
+                                "Можно и своими словами — текстом или голосовым.")
+        elif text.startswith("/"):
+            self.pult.send_text("Такой команды нет. " + self.HELP)
+        else:                                   # своими словами — тот же разбор, что и для голосовых
+            self.act(text)

@@ -153,7 +153,7 @@ def test_decision_from_cabinet_sends_letter_and_survives_restart(env):
 def test_templates_list(env):
     c, _, _ = env
     keys = {t["key"] for t in c.get("/api/templates").json()["templates"]}
-    assert keys == {"delegate", "auto_reply", "review_question", "protocol_mail", "decision_yes", "decision_no", "invite",
+    assert keys == {"delegate", "auto_reply", "review_question", "protocol_mail", "decision_yes", "decision_no", "invite", "assign",
                     "task_go"}
 
 

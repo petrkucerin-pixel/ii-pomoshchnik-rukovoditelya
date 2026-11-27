@@ -194,6 +194,20 @@ class TelegramPult:
             body["reply_markup"] = _keyboard(buttons)
         self._call("editMessageText", body)
 
+    def download(self, file_id: str, *, limit: int = 20_000_000) -> bytes:
+        """Файл от руководителя (голосовое) по file_id. Ошибки — без токена в тексте."""
+        info = self._call("getFile", {"file_id": file_id})
+        path, size = info.get("file_path"), int(info.get("file_size") or 0)
+        if not path or size > limit:
+            raise TelegramError("файл недоступен или слишком большой", None)
+        try:
+            r = self._client.get(f"{self._base}/file/bot{self._token}/{path}", follow_redirects=False, timeout=60)
+        except (httpx.HTTPError, OSError) as exc:
+            raise TelegramError(f"Не удалось скачать файл ({type(exc).__name__})", None) from None
+        if not r.is_success:
+            raise TelegramError(f"Не удалось скачать файл ({r.status_code})", r.status_code)
+        return r.content
+
     def answer_callback(self, callback_id: str, text: str = "") -> None:
         self._call("answerCallbackQuery", {"callback_query_id": callback_id, "text": text})
 
