@@ -97,3 +97,16 @@ def test_digest_since_keeps_only_today(a):
     clock.advance(days=1)
     start = clock.now().replace(hour=0, minute=0)
     assert all_lines and digest_from_journal(asst.j, asst.p.org, since=start) == []
+
+
+def test_decision_is_written_once_per_glued_topic(am):
+    asst, clock, _ = am
+    asst.process_inbox()
+    g = next(x for x in asst.active_groups() if "Отпуск" in x["subject"])
+    src = asst.j.event(g["event_ids"][0])["external_id"]
+    asst.memory.add([fact("Отпуск Ирины Т.", "Согласовать отпуск", clock.now(), source=src),
+                     fact("Отпуск Ирины Т. 20–30 декабря", "Замена найдена", clock.now(), source=src, quote="замену нашли")])
+    asst.decide_letter(g["event_id"], "no")
+    asst.sync_memory()
+    decided = [f for f in asst.memory.all() if f.kind == "решение"]
+    assert len(decided) == 1 and decided[0].what.startswith("отказ — ")          # без «Иван Петров: Иван Петров»
