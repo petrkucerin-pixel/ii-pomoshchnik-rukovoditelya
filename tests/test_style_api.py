@@ -18,27 +18,33 @@ def test_style_overview_teach_and_forget(env):
     c, a, _ = env
     a.llm = StubLLM(style_answer)
     d = c.get("/api/style").json()
-    assert d["style"] and d["rules"] == [] and {x["key"] for x in d["letters"]} >= {"auto_reply", "invite", "delegate"}
-    first = next(x for x in d["letters"] if x["key"] == "auto_reply")
+    kinds = {k["key"]: k for k in d["kinds"]}
+    assert d["style"] and d["rules"] == [] and {"*", "auto_reply", "decision", "invite", "delegate"} <= set(kinds)
+    assert set(d["audiences"]) == {"*", "внешний", "руководство", "команда"}
+    first = kinds["auto_reply"]["letters"][0]
     assert first["source"] == "стандартный" and "{" not in first["example"]          # пример с подставленными данными
 
-    r = c.post("/api/style/teach", json={"message": "Не пиши «подтверждаю», пиши «спасибо, получил»."}).json()
+    r = c.post("/api/style/teach", json={"message": "Не пиши «подтверждаю», пиши «спасибо, получил».",
+                                         "kind": "auto_reply", "audience": "*"}).json()
     assert r["reply"] == "Запомнил." and len(r["rules"]) == 1
     d = c.get("/api/style").json()
-    ar = next(x for x in d["letters"] if x["key"] == "auto_reply")
+    kinds = {k["key"]: k for k in d["kinds"]}
+    assert len(kinds["auto_reply"]["rules"]) == 1 and kinds["invite"]["rules"] == []
+    ar = kinds["auto_reply"]["letters"][0]
     assert ar["source"] == "по вашим правилам" and ar["example"].startswith("Спасибо, получил.")
     assert any(x["kind"] == "style_rule_added" and x["actor"] == "human" for x in a.j.actions())
 
     assert c.delete(f"/api/style/rules/{d['rules'][0]['id']}").status_code == 200
     assert c.get("/api/style").json()["rules"] == []
     assert c.delete("/api/style/rules/999999").status_code == 404
-    assert c.post("/api/style/teach", json={"message": "  "}).status_code == 422
+    assert c.post("/api/style/teach", json={"message": "  ", "kind": "auto_reply"}).status_code == 422
+    assert c.post("/api/style/teach", json={"message": "x", "kind": "нет такого"}).status_code == 422
 
 
 def test_next_auto_reply_uses_learned_style(env):
     c, a, _ = env
     a.llm = StubLLM(style_answer)
-    c.post("/api/style/teach", json={"message": "короче"})
+    c.post("/api/style/teach", json={"message": "короче", "kind": "auto_reply", "audience": "*"})
     sent = [x["payload"] for x in a.j.actions() if x["kind"] == "mail_sent" and x["payload"].get("template") == "auto_reply"]
     before = len(sent)
     # новое письмо той же категории, что уже получало автоответ

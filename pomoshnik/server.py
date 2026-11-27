@@ -783,6 +783,8 @@ def api_template_discuss(key: str, d: DiscussIn):
 # ---------------- как пишет руководитель (TASK_14): правила стиля вместо шаблонов ----------------
 class TeachIn(BaseModel):
     message: str
+    kind: str = "*"            # вид письма: auto_reply, delegate, decision, invite… или «*» — все
+    audience: str = "*"        # внешний | руководство | команда | «*» — любому
 
 
 @app.get("/api/style")
@@ -798,7 +800,10 @@ def api_style_teach(d: TeachIn):
     if not d.message.strip():
         raise HTTPException(422, "напишите, как писать письма")
     with stand.lock:
-        return stand.assistant.writer.teach(d.message)
+        try:
+            return stand.assistant.writer.teach(d.message, d.kind, d.audience)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from None
 
 
 @app.delete("/api/style/rules/{rule_id}")

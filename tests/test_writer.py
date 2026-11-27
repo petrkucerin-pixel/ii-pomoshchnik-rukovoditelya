@@ -3,9 +3,12 @@ from datetime import datetime
 
 import pytest
 
+from pathlib import Path
+
 from pomoshnik.llm import StubLLM
+from pomoshnik.org import Org
 from pomoshnik.templates import Templates
-from pomoshnik.writer import StyleBook
+from pomoshnik.writer import StyleBook, audience_of
 from yadro.clock import TZ_EKB, FakeClock
 from yadro.journal import Journal
 
@@ -75,7 +78,7 @@ def test_bad_generated_letter_keeps_previous_text_and_says_why(env, bad, why):
     _, body = b.render("invite", встреча="Планёрка", когда="12.12 10:00", длительность=30, ссылка="L", подпись="П")
     assert body.startswith("Здравствуйте!\n\nПриглашаю")                # прежний текст
     assert b.render("auto_reply", тема="x", подпись="П")[1].startswith("Спасибо, получил.")   # остальные — новые
-    inv = next(x for x in b.overview()["letters"] if x["key"] == "invite")
+    inv = next(x for k in b.overview()["kinds"] for x in k["letters"] if x["key"] == "invite")
     assert inv["source"] == "стандартный" and why in inv["problem"]
 
 
@@ -91,7 +94,8 @@ def test_learns_from_leader_edit_once(env):
     assert rule["example"] == {"draft": "Подтверждаю получение.", "text": "Спасибо, получил."}
     n = len(llm.calls)
     assert b.learn_pending() == 0 and len(llm.calls) == n                 # уже выучено — модель не зовём
-    assert b.render("auto_reply", тема="x", подпись="П")[1].startswith("Спасибо, получил.")
+    assert rule["kind"] == "decision"                                      # правка в карточке — про ответы по решению
+    assert b.render("auto_reply", тема="x", подпись="П")[1].startswith("Принято, подтверждаю.")   # автоответ не тронут
 
 
 def test_edit_about_facts_only_is_not_a_rule(env):
@@ -115,7 +119,7 @@ def test_everything_survives_restart(env):
     book(env, gen(SHORT)).teach("короче")
     again = StyleBook(StubLLM(), j, t, style=STYLE)                       # модель после перезапуска не нужна
     assert len(again.rules()) == 1 and again.render("auto_reply", тема="x", подпись="П")[1].startswith("Спасибо")
-    assert "без «подтверждаю»" in again.rules_text()
+    assert "без «подтверждаю»" in again.rules_text("auto_reply")
 
 
 def test_model_failure_keeps_letters_working(env):
@@ -127,3 +131,58 @@ def test_model_failure_keeps_letters_working(env):
     b.teach("короче")
     assert len(b.rules()) == 1
     assert b.render("auto_reply", тема="x", подпись="П")[1].startswith("Принято, подтверждаю.")
+
+
+# ---------------- виды писем и адресаты (решение Пита 27.11: «на все письма одного шаблона быть не может») ----------------
+ORG = Org.load(Path(__file__).resolve().parent.parent / "data" / "task" / "org_structure.csv")
+
+
+def test_audience_by_org_structure():
+    assert audience_of(ORG, "p09@company.example") == "руководство"          # руководитель руководителя
+    assert audience_of(ORG, "p02@company.example") == "команда"              # подчинённый
+    assert audience_of(ORG, "p10@company.example") == "команда"              # коллега
+    assert audience_of(ORG, "buyer@romashka.example") == "внешний"
+
+
+def test_rule_for_one_kind_does_not_touch_other_letters(env):
+    llm = gen(SHORT)
+    b = book(env, llm)
+    b.teach("короче", kind="auto_reply")
+    assert b.render("auto_reply", тема="x", подпись="П")[1].startswith("Спасибо, получил.")
+    _, invite = b.render("invite", встреча="Планёрка", когда="12.12", длительность=30, ссылка="L", подпись="П")
+    assert invite.startswith("Здравствуйте!\n\nПриглашаю")                       # приглашение не тронуто
+    asked = next(u for s, u in llm.calls if "составь тексты" in s.lower())
+    assert "Ключ: auto_reply" in asked and "Ключ: invite" not in asked           # модель переписывает только автоответ
+
+
+def test_rule_for_one_audience_only(env):
+    b = book(env, gen({"auto_reply": "Спасибо, получил.\n\n{подпись}",
+                       "auto_reply@руководство": "Виктор Андреевич, спасибо, получил.\n\n{подпись}"}))
+    b.teach("руководству — по имени-отчеству", kind="auto_reply", audience="руководство")
+    assert b.render("auto_reply", "руководство", подпись="П")[1].startswith("Виктор Андреевич")
+    assert b.render("auto_reply", "внешний", подпись="П")[1].startswith("Принято, подтверждаю.")   # клиентам — как было
+    assert b.render("auto_reply", "команда", подпись="П")[1].startswith("Принято, подтверждаю.")
+
+
+def test_rules_text_for_decision_drafts(env):
+    j, _ = env
+    b = book(env, gen(SHORT))
+    b.teach("на «вы»", kind="*")
+    b.teach("руководству без «ты»", kind="decision", audience="руководство")
+    b.teach("команде коротко", kind="decision", audience="команда")
+    b.teach("автоответ одной строкой", kind="auto_reply")
+    boss = b.rules_text("decision", "руководство")
+    assert len(boss.splitlines()) == 2 and len(b.rules_text("decision", "команда").splitlines()) == 2
+    assert len(b.rules_text("decision").splitlines()) == 1                       # без адресата — только общие
+
+
+def test_learned_rule_belongs_to_decision_kind_and_recipient(env, tmp_path):
+    j, t = env
+    b = StyleBook(gen(SHORT), j, t, style=STYLE, org=ORG)
+    eid, _ = j.record_event("mail", "m-boss", {"from": "p09@company.example", "from_name": "Виктор Орлов",
+                                               "subject": "Бюджет", "body": "..."})
+    j.log_action("decision_draft_edit", actor="human", path="decision", event_id=eid,
+                 payload={"key": "q1", "draft": "Подтверждаю.", "text": "Виктор Андреевич, спасибо, получил."})
+    b.learn_pending()
+    r = b.rules()[0]
+    assert (r["kind"], r["audience"], r["source"]) == ("decision", "руководство", "ваша правка")

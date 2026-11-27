@@ -313,9 +313,13 @@ function mailPage(host) {
     function render() {
       const dept = ["team", "internal"].includes(group);
       const topTabs = [["counterparty", titles.counterparty || "Контрагенты"], ["departments", "Отделы"],
-        ["newsletter", titles.newsletter || "Рассылки"], ["spam", titles.spam || "Спам"]];
+        ["newsletter", titles.newsletter || "Рассылки"], ["spam", titles.spam || "Спам"], ["style", "Как я пишу"]];
       tabs.replaceChildren(...topTabs.map(([key, name]) =>
         toggle(name, key === group || (key === "departments" && dept), () => select(key === "departments" ? "team" : key))));
+      if (group === "style") {
+        stylePage(body);
+        return;
+      }
       const filters = el("div", "filters");
       if (dept) filters.append(el("div", "segmented", ["team", "internal"].map(key =>
         toggle(titles[key]?.split(":").pop().trim() || key, group === key, () => select(key)))));
@@ -354,43 +358,70 @@ function mailPage(host) {
   });
 }
 
-// Как пишет руководитель (TASK_14). Шаблонов он не составляет: помощник пишет письма в его стиле,
-// учится на его правках в карточках решений и на его словах. Факты в письма подставляет код.
-function styleCard(host) {
+// Как пишет руководитель (TASK_14). Шаблонов он не составляет: помощник пишет письма в его стиле и учится
+// на его правках и словах. Правила — по видам писем и адресатам (Пит 27.11: «на все письма одного шаблона быть не может»).
+function stylePage(host, selected = "auto_reply") {
   load(host, async mount => {
     const d = await api("/api/style");
-    const rule = r => el("div", "row",
-      el("strong", "", r.text),
-      hint((r.source === "ваша правка" ? "Из вашей правки" : "Вы сказали") + " · " + stamp(r.at)),
-      r.example ? el("p", "", "«" + r.example.draft + "» → «" + r.example.text + "»") : null,
-      button("Забыть", async () => {
-        await api("/api/style/rules/" + r.id, "DELETE");
-        announce("Помощник забыл правило");
-        styleCard(host);
-      }, "button-ghost"));
-    const message = el("textarea");
-    message.rows = 2;
-    message.required = true;
-    message.placeholder = "Например: не пиши «подтверждаю», пиши «спасибо, получил»";
-    const error = feedback(), teach = el("form", "stack");
-    const panel = card("Как я пишу", "edit",
-      hint("Шаблоны составлять не нужно: помощник пишет письма в вашем стиле и учится, когда вы правите его черновики. " +
-        "Цифры, сроки, имена и ссылки подставляет код, модель их не трогает."),
-      el("h3", "", "Стиль"), el("p", "", d.style || "Стиль в профиле не описан."),
-      el("h3", "", "Чему помощник научился"), rows([...d.rules].reverse(), rule, "Пока ничему: поправьте черновик в карточке решения или скажите ниже."),
-      el("h3", "", "Научить помощника"), teach);
-    teach.append(field("Как писать письма", message), error, formSubmit(teach, "Запомнить", () => submitAction(panel, error, async () => {
-      const text = message.value.trim();
-      if (!text) throw new Error("Напишите, как писать письма.");
-      const r = await api("/api/style/teach", "POST", {message: text});
-      announce(r.reply);
-      styleCard(host);
-    })));
-    const letters = card("Как сейчас звучат письма", "mail", rows(d.letters, x => el("div", "row",
-      el("strong", "", x.title), meta(x.source, x.used_for),
-      el("p", "letter-example", x.example),
-      x.problem ? hint("Новый текст не прошёл проверку кода: " + x.problem + ". Пока уходит прежний.") : null), "Писем нет."));
-    mount.replaceChildren(el("div", "dashboard", panel, letters));
+    const audience = key => d.audiences[key] || key;
+    const menu = card("Виды писем", "mail",
+      hint("Шаблоны составлять не нужно. Помощник пишет в вашем стиле и учится, когда вы правите его черновики " +
+        "или говорите, как писать. Цифры, сроки, имена и ссылки подставляет код."));
+    const panel = el("div");
+    mount.replaceChildren(el("div", "split", menu, panel));
+    function show(kind) {
+      menu.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.kind === kind.key)));
+      panel.replaceChildren(kindPanel(kind));
+      if (phone.matches) panel.scrollIntoView({block: "start"});
+    }
+    function kindPanel(kind) {
+      const rule = r => el("div", "row",
+        el("strong", "", r.text),
+        meta(audience(r.audience), r.source === "ваша правка" ? "из вашей правки" : "вы сказали", stamp(r.at)),
+        r.example ? el("p", "", "«" + r.example.draft + "» → «" + r.example.text + "»") : null,
+        button("Забыть", async () => {
+          await api("/api/style/rules/" + r.id, "DELETE");
+          announce("Помощник забыл правило");
+          stylePage(host, kind.key);
+        }, "button-ghost"));
+      const who = el("select");
+      for (const [key, label] of Object.entries(d.audiences))
+        who.append(Object.assign(el("option", "", key === "*" ? "Любому адресату" : label[0].toUpperCase() + label.slice(1)), {value: key}));
+      const message = el("textarea");
+      message.rows = 2;
+      message.required = true;
+      message.placeholder = kind.key === "decision" ? "Например: руководству — без «ты», по имени-отчеству"
+        : "Например: не пиши «подтверждаю», пиши «спасибо, получил»";
+      const error = feedback(), teach = el("form", "stack");
+      const box = card(kind.title, "edit",
+        kind.key === "*" ? el("p", "", d.style || "Стиль в профиле не описан.") : null,
+        el("h3", "", "Чему помощник научился"),
+        rows([...kind.rules].reverse(), rule, kind.key === "decision"
+          ? "Пока ничему: поправьте черновик ответа в карточке решения или скажите ниже."
+          : "Пока ничему: скажите ниже, как писать такие письма."),
+        el("h3", "", "Научить помощника"), teach);
+      teach.append(field("Кому", who), field("Как писать " + (kind.key === "*" ? "все письма" : "такие письма"), message),
+        error, formSubmit(teach, "Запомнить", () => submitAction(box, error, async () => {
+          const text = message.value.trim();
+          if (!text) throw new Error("Напишите, как писать письма.");
+          const r = await api("/api/style/teach", "POST", {message: text, kind: kind.key, audience: who.value});
+          announce(r.reply);
+          stylePage(host, kind.key);
+        })));
+      const sounds = kind.letters.length ? card("Как сейчас звучит", "mail", rows(kind.letters, x => el("div", "row",
+        el("strong", "", x.title + (x.audience === "*" ? "" : " · " + audience(x.audience))),
+        meta(x.source, x.used_for),
+        el("p", "letter-example", x.example),
+        x.problem ? hint("Новый текст не прошёл проверку кода: " + x.problem + ". Пока уходит прежний.") : null), "")) : null;
+      return stack(box, sounds);
+    }
+    for (const kind of d.kinds) {
+      const pick = toggle(kind.title + (kind.rules.length ? " · " + kind.rules.length : ""), kind.key === selected, () => show(kind));
+      pick.className = "row-link";
+      pick.dataset.kind = kind.key;
+      menu.append(pick);
+    }
+    show(d.kinds.find(k => k.key === selected) || d.kinds[0]);
   });
 }
 
@@ -872,7 +903,6 @@ function profilePage(host) {
     const rules = card("Правила по категориям", "list", rows(Object.entries(p.rules), ([category, rule]) =>
       el("div", "row", el("strong", "", readable(category)), el("p", "", readable(rule.action)),
         rule.delegate_to ? hint("Исполнитель · " + rule.delegate_to) : null, hint(rule.source)), "Правил пока нет."));
-    const writes = el("div");
     const log = card("Журнал действий помощника", "clock", rows(journal.actions, a => el("div", "row",
       meta(stamp(a.at), {assistant: "Помощник", human: "Руководитель"}[a.actor] || a.actor),
       el("p", "", a.summary || readable(a.kind))), "Действий пока нет."));
@@ -881,8 +911,7 @@ function profilePage(host) {
         el("p", "", "Писем без руководителя · " + metrics.letters_without_leader),
         el("p", "", "Доля писем без руководителя · " + (metrics.share_without_leader == null ? "—" :
           (metrics.share_without_leader * 100).toLocaleString("ru-RU", {maximumFractionDigits: 2}) + " %")),
-        el("p", "", "До утверждения протокола, мин · " + (metrics.protocol_minutes_to_approved ?? "—"))), "chart")), rules), writes, log);
-    styleCard(writes);
+        el("p", "", "До утверждения протокола, мин · " + (metrics.protocol_minutes_to_approved ?? "—"))), "chart")), rules), log);
   });
 }
 

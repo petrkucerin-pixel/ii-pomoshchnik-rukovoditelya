@@ -24,7 +24,7 @@ from .reports import Report, review
 from .protocol import ProtocolStore, build_protocol, questions_from_previous, render_markdown
 from .templates import Templates
 from .triage import Decision, classify, decide
-from .writer import StyleBook
+from .writer import StyleBook, audience_of
 
 # Сколько минут руководителя экономит одно действие помощника. Допущения для метрики «освобождённые часы».
 MINUTES_SAVED = {"авто": 3, "делегировать": 5, "в_сводку": 2, "игнорировать": 1, "спросить_руководителя": 2}
@@ -300,7 +300,7 @@ class Assistant:
     @property
     def writer(self) -> StyleBook:
         """Как пишет руководитель: правила стиля и тексты писем, которые помощник составил себе сам (TASK_14)."""
-        return StyleBook(self.llm, self.j, self.templates, style=self.p.style)
+        return StyleBook(self.llm, self.j, self.templates, style=self.p.style, org=self.p.org)
 
     @property
     def signature(self) -> str:
@@ -311,7 +311,7 @@ class Assistant:
         Каждое исходящее — в журнал, кабинет показывает его в переписке."""
         values.setdefault("подпись", self.signature)
         values.setdefault("руководитель", self.p.name)
-        subject, body = self.writer.render(template, **values)
+        subject, body = self.writer.render(template, audience_of(self.p.org, to), **values)
         mid = self.send_mail.send(to, subject, body, in_reply_to=in_reply_to)
         self._log("mail_sent", path="now", event_id=event_id, summary=f"{to}: {subject}",
                   payload={"to": to, "subject": subject, "body": body, "in_reply_to": in_reply_to,
