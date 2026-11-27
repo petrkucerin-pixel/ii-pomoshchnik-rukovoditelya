@@ -183,8 +183,50 @@ function metricCards(cards) {
 }
 
 function taskRow(t) {
-  return el("div", "row", el("strong", "", t.task),
-    meta(t.owner, el("span", t.overdue ? "late" : "", "до " + dateLabel(t.due)), t.status));
+  const b = button(el("span", "task-line", el("strong", "", t.task),
+    meta(t.owner, el("span", t.overdue ? "late" : "", "до " + dateLabel(t.due)), t.status), icon("arrow")),
+    () => { location.hash = "meetings/t/" + encodeURIComponent(t.id); }, "row-link");
+  b.setAttribute("aria-label", "Задача: " + t.task);
+  return b;
+}
+
+// Страница задачи: суть, что известно, что дальше и кнопки решения.
+function taskView(host, id) {
+  const again = () => taskView(host, id);
+  load(host, async mount => {
+    const p = await api("/api/tasks/" + encodeURIComponent(id));
+    const t = p.task, n = p.next;
+    const actions = el("div", "actions"), error = feedback();
+    const due = el("input");
+    due.type = "date";
+    due.value = t.due;
+    due.setAttribute("aria-label", "Новый срок");
+    const act = (action, body = {}) => submitAction(actions, error, async () => {
+      await api("/api/tasks/" + encodeURIComponent(id) + "/action", "POST", {action, ...body});
+      announce({remind: "Напоминание отправлено", move: "Срок перенесён", done: "Задача закрыта"}[action]);
+      again();
+    });
+    if (t.status !== "выполнена") {
+      actions.append(button("Напомнить: " + t.owner.split(" ")[0], () => act("remind"), "primary"),
+        el("label", "task-move", due, button("Перенести срок", () => act("move", {due: due.value}))),
+        button("Выполнена", () => act("done"), "quiet"));
+    }
+    const letter = x => el("div", "row", meta(x.from, x.at ? stamp(x.at) : "", x.route), el("strong", "", x.subject));
+    const fact = f => el("div", "row", meta(f.who, f.when, f.source), el("p", "", f.what), el("blockquote", "", f.quote));
+    mount.replaceChildren(backLink("← Задачи"),
+      card(t.task, "list",
+        meta(t.owner, el("span", t.overdue ? "late" : "", "до " + dateLabel(t.due)), t.status, "откуда: " + t.source),
+        p.flags.length ? bullets(p.flags, "") : null,
+        el("h3", "", "Что дальше"), el("p", "", n.text),
+        n.meeting ? button("Открыть встречу «" + n.meeting.title + "»", () => openMeeting(n.meeting), "quiet") : null,
+        actions, error),
+      card("Что известно", "memory",
+        el("h3", "", "Письма по теме — клиент, исполнитель"), rows(p.letters, letter, "Писем по теме нет."),
+        el("h3", "", "Из памяти и протоколов"), rows(p.facts, fact, "В памяти по теме ничего нет."),
+        el("h3", "", "Что уже делали"), rows(p.history, h => el("div", "row", meta(stamp(h.at)), h.summary), "Пока ничего.")));
+    const back = mount.querySelector(".back-link");
+    back.href = "#meetings/tasks";
+  });
 }
 
 let calendarDay = null;            // неделя календаря, к которой возвращаемся со страницы встречи
@@ -856,6 +898,7 @@ function tasksView(host) {
 
 function meetingsPage(host, sub = "") {
   if (sub.startsWith("m/")) return meetingView(host, decodeURIComponent(sub.slice(2)));
+  if (sub.startsWith("t/")) return taskView(host, decodeURIComponent(sub.slice(2)));
   if (sub === "protocols") return protocolsView(host);
   if (sub === "tasks") return tasksView(host);
   return calendarView(host);

@@ -387,3 +387,8 @@ select { width: 100%; min-height: 44px; padding: 9px 12px; border-radius: var(--
 
 /* TASK_14: пример письма в «Как я пишу» — с переносами строк */
 .letter-example { white-space: pre-line; margin: 6px 0 0; padding: 10px 12px; border-radius: 14px; background: rgba(255, 255, 255, .55); }
+.task-line { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; align-items: center; text-align: left; width: 100%; }
+.task-line .meta { grid-column: 1; }
+.task-line svg { grid-row: 1 / span 2; grid-column: 2; }
+.task-move { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.task-move input { width: auto; }

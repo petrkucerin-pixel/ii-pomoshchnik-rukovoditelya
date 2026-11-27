@@ -130,13 +130,95 @@ def task_dict(t: TaskRow, today: date, source: str = "tasks.csv") -> dict:
             "overdue": t.status not in DONE and (t.status == "просрочена" or t.due < today), "source": source}
 
 
+TASK_ACTIONS = ("remind", "move", "done")
+ROUTE_LABELS = {"делегировать": "помощник передал исполнителю", "авто": "помощник ответил сам",
+                "в_сводку": "в сводку", "игнорировать": "пропущено", "спросить_руководителя": "ждёт вашего решения"}
+
+
+def task_history(a: Assistant, task_id: str) -> list[dict]:
+    return [{"action": x["payload"]["action"], "due": x["payload"].get("due"), "at": x["at"].isoformat(),
+             "summary": x["summary"]}
+            for x in a.j.actions() if x["kind"] == "task_action" and x["payload"].get("task_id") == task_id]
+
+
 def all_tasks(a: Assistant) -> list[tuple[TaskRow, str]]:
-    """Задачи из файла заказчика и из утверждённых протоколов."""
+    """Задачи из файла заказчика и из утверждённых протоколов, с решениями руководителя из кабинета поверх."""
     rows: list[tuple[TaskRow, str]] = [(t, "tasks.csv") for t in a.tasks]
     for t in protocol_tasks(a.j):       # статусы со сверки на следующих встречах и порядок «ждёт задачи N»
         rows.append((TaskRow(f"p{t['protocol_id']}-{t['action_id']}", t["what"], t["owner"], t["due"], t["status"]),
                      f"протокол {t['protocol_id']}"))
-    return rows
+    over: dict[str, dict] = {}
+    for x in a.j.actions():
+        pl = x["payload"] or {}
+        if x["kind"] == "task_action" and pl.get("action") in ("move", "done"):
+            o = over.setdefault(pl["task_id"], {})
+            if pl["action"] == "move":
+                o.update(due=date.fromisoformat(pl["due"]), status="перенесена")
+            else:
+                o["status"] = "выполнена"
+    out = []
+    for t, src in rows:
+        o = over.get(t.id)
+        out.append((TaskRow(t.id, t.task, t.owner, o.get("due", t.due), o.get("status", t.status)) if o else t, src))
+    return out
+
+
+def _entity(text: str) -> str:
+    m = re.search(r"«([^»]+)»", text)
+    return m.group(1) if m else ""
+
+
+def task_page(a: Assistant, task_id: str) -> dict | None:
+    """Задача целиком: суть, что известно (письма, память), противоречия и что делать дальше."""
+    today = a.today()
+    found = next(((t, src) for t, src in all_tasks(a) if t.id == task_id), None)
+    if not found:
+        return None
+    t, src = found
+    orig = next((x for x in a.tasks if x.id == task_id), t)
+    key = _entity(t.task)
+    letters, seen = [], set()
+    if key:
+        for x in a.j.actions():
+            if not (x["kind"].startswith("mail_") and x["kind"] != "mail_sent" and x["event_id"]) or x["event_id"] in seen:
+                continue
+            ev = (a.j.event(x["event_id"]) or {}).get("payload") or {}
+            if key.lower() in f"{ev.get('from_name', '')} {ev.get('subject', '')} {ev.get('body', '')}".lower():
+                seen.add(x["event_id"])
+                letters.append({"from": ev.get("from_name") or ev.get("from", ""), "at": ev.get("received"),
+                                "subject": ev.get("subject", ""),
+                                "route": ROUTE_LABELS.get(x["kind"].removeprefix("mail_"), "")})
+    facts = []
+    if key and a.memory is not None:
+        facts = [{"when": f.when.date().isoformat(), "who": f.who, "what": f.what, "quote": f.quote, "source": f.source}
+                 for f in a.memory.search(key)[-5:]]
+    flags = []
+    if orig.status == "просрочена" and orig.due >= today:
+        flags.append(f"В данных статус «просрочена», а срок {orig.due:%d.%m} ещё не наступил — уточнить у исполнителя.")
+    late = t.status not in DONE and (t.due < today or t.status == "просрочена")
+    if t.due < today and t.status not in DONE:
+        flags.append(f"Срок прошёл {(today - t.due).days} дн. назад.")
+    if letters:
+        flags.append(f"По теме «{key}» писем: {len(letters)}, последнее — {letters[-1]['from']}.")
+    hist = task_history(a, task_id)
+    reminded = [h for h in hist if h["action"] == "remind"]
+    first = t.owner.split()[0]
+    meet = next((m for m in a.meetings if m.start.date() >= today and t.owner in m.attendees), None)
+    where = f" на встрече «{meet.title}» {meet.start:%d.%m %H:%M}" if meet else " один на один"
+    if t.status in DONE:
+        text = "Задача закрыта, ничего делать не нужно."
+    elif late and not reminded:
+        text = (f"Нажмите «Напомнить» — помощник напишет исполнителю ({t.owner}) и спросит, на каком этапе и когда "
+                f"будет готово. Ответ придёт в сводку.")
+    elif late:
+        text = (f"Помощник уже напоминал ({reminded[-1]['at'][:10]}). Если ответа нет — перенесите срок или "
+                f"обсудите{where}.")
+    else:
+        text = f"Срок {t.due:%d.%m}, всё в рамках — вмешиваться не нужно."
+    return {"task": task_dict(t, today, src), "letters": letters[-6:], "facts": facts, "flags": flags,
+            "history": hist, "next": {"text": text, "actions": list(TASK_ACTIONS),
+                                      "meeting": {"uid": meet.uid, "title": meet.title, "start": meet.start.isoformat()}
+                                      if meet else None}}
 
 
 def tasks(a: Assistant) -> dict:
@@ -223,7 +305,7 @@ def _focus(meetings: list[Meeting], day: date) -> list[dict]:
 
 def today(a: Assistant, protocols) -> dict:
     day = a.today()
-    plan = build_day_plan(day, a.meetings, a.tasks)
+    plan = build_day_plan(day, a.meetings, [t for t, _ in all_tasks(a)])   # с решениями из кабинета поверх
     plist = _protocol_rows(a)
     return {"day": day.isoformat(), "leader": a.p.name,
             "metrics": compute_metrics(a.j, protocols)["cards"],

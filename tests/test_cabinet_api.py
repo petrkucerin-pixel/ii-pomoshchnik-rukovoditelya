@@ -334,3 +334,36 @@ def test_risk_shows_only_related_actions_and_what_leader_should_do(env):
     nxt = r["next"]
     assert "не хватает 6 %" in nxt["text"] and "ничего не нужно" in nxt["text"]
     assert nxt["meeting"] and nxt["meeting"]["title"] in nxt["then"]
+
+
+# ---------------- задача: страница и что дальше ----------------
+def test_task_page_has_context_contradiction_and_next_step(env):
+    c, _, _ = env
+    r = c.get("/api/tasks/t001")
+    assert r.status_code == 200
+    t = r.json()
+    assert t["task"]["task"] == "Подготовить КП для «ТехноСтрой»" and t["task"]["owner"] == "Ольга Смирнова"
+    assert any("ТехноСтрой" in x["from"] + x["subject"] for x in t["letters"])     # письма клиента по теме
+    assert any("не наступил" in f for f in t["flags"])                            # «просрочена», а срок 24.12
+    assert t["next"]["text"] and set(t["next"]["actions"]) == {"remind", "move", "done"}
+    assert c.get("/api/tasks/nope").status_code == 404
+
+
+def test_task_actions_remind_move_done(env):
+    c, a, _ = env
+    before = len(letters(c, direction="out"))
+    assert c.post("/api/tasks/t001/action", json={"action": "remind"}).status_code == 200
+    out = letters(c, direction="out")
+    assert len(out) == before + 1 and out[-1]["to_email"] == "p02@company.example"
+    assert "Подготовить КП для «ТехноСтрой»" in out[-1]["subject"]
+    assert c.get("/api/tasks/t001").json()["history"][-1]["action"] == "remind"
+    c.post("/api/tasks/t001/action", json={"action": "move", "due": "2026-12-18"})
+    t = next(x for x in c.get("/api/tasks").json()["tasks"] if x["id"] == "t001")
+    assert t["due"] == "2026-12-18" and t["status"] == "перенесена" and not t["overdue"]
+    c.post("/api/tasks/t001/action", json={"action": "done"})
+    t = next(x for x in c.get("/api/tasks").json()["tasks"] if x["id"] == "t001")
+    assert t["status"] == "выполнена" and not t["overdue"]
+    srv.stand.restart_assistant()
+    assert next(x for x in c.get("/api/tasks").json()["tasks"] if x["id"] == "t001")["status"] == "выполнена"
+    assert c.post("/api/tasks/t001/action", json={"action": "fly"}).status_code == 422
+    assert c.post("/api/tasks/t001/action", json={"action": "move"}).status_code == 422      # без нового срока

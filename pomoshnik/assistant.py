@@ -611,6 +611,29 @@ class Assistant:
                   payload={"to": g["email"], "subject": subject, "body": full, "in_reply_to": g["id"],
                            "kind": "решение", "template": "", "message_id": mid})
 
+    # ---------------- задачи: решения руководителя из кабинета ----------------
+    def task_action(self, task_id: str, task: str, owner: str, due: date, action: str, new_due: date | None = None):
+        """«Напомнить» — письмо исполнителю; «перенести» и «выполнена» — запись в журнал поверх задачи."""
+        payload = {"task_id": task_id, "action": action, "due": new_due.isoformat() if new_due else None}
+        if action == "remind":
+            who = next((p for p in self.p.org.people if p.name == owner), None) if self.p.org else None
+            if not who:
+                raise ValueError("исполнителя нет в оргструктуре — напомнить некому")
+            to = self.p.org.email_of(who)
+            subject = f"Задача «{task}» — срок {due:%d.%m}"
+            body = (f"{owner.split()[0]}, по задаче «{task}» срок {due:%d.%m}. На каком этапе и когда будет готово? "
+                    f"Если что-то мешает — напишите, помогу.\n\n{self.signature}")
+            mid = self.send_mail.send(to, subject, body)
+            self._log("mail_sent", path="now", summary=f"{to}: {subject}",
+                      payload={"to": to, "subject": subject, "body": body, "in_reply_to": None,
+                               "kind": "напоминание", "template": "", "message_id": mid})
+            summary = f"Напомнил {owner}: «{task}»"
+        elif action == "move":
+            summary = f"Срок «{task}» перенесён на {new_due:%d.%m}"
+        else:
+            summary = f"«{task}» отмечена выполненной"
+        self._log("task_action", actor="human", path="now", summary=summary, payload=payload)
+
     def _decide_letter(self, verdict: str, eid: int):
         self.decide_letter(eid, verdict)
 

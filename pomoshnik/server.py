@@ -887,6 +887,36 @@ def api_tasks():
         return cabinet.tasks(stand.assistant)
 
 
+class TaskActionIn(BaseModel):
+    action: Literal["remind", "move", "done"]
+    due: date | None = None
+
+
+@app.get("/api/tasks/{task_id}")
+def api_task(task_id: str):
+    with stand.lock:
+        page = cabinet.task_page(stand.assistant, task_id)
+    if not page:
+        raise HTTPException(404, "такой задачи нет")
+    return page
+
+
+@app.post("/api/tasks/{task_id}/action")
+def api_task_action(task_id: str, x: TaskActionIn):
+    if x.action == "move" and not x.due:
+        raise HTTPException(422, "для переноса нужен новый срок")
+    with stand.lock:
+        a = stand.assistant
+        found = next((t for t, _ in cabinet.all_tasks(a) if t.id == task_id), None)
+        if not found:
+            raise HTTPException(404, "такой задачи нет")
+        try:
+            a.task_action(task_id, found.task, found.owner, found.due, x.action, x.due)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from None
+        return cabinet.task_page(a, task_id)
+
+
 @app.get("/api/memory")
 def api_memory(q: str = ""):
     with stand.lock:
