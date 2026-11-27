@@ -724,23 +724,37 @@ class Assistant:
         """«Напомнить» — письмо исполнителю; «перенести» и «выполнена» — запись в журнал поверх задачи."""
         payload = {"task_id": task_id, "action": action, "due": new_due.isoformat() if new_due else None}
         if action == "remind":
-            who = next((p for p in self.p.org.people if p.name == owner), None) if self.p.org else None
-            if not who:
+            question = f"по задаче «{task}» срок {due:%d.%m}. На каком этапе и когда будет готово?"
+            if not self._task_letter(owner, task, due, question, "напоминание"):
                 raise ValueError("исполнителя нет в оргструктуре — напомнить некому")
-            to = self.p.org.email_of(who)
-            subject = f"Задача «{task}» — срок {due:%d.%m}"
-            body = (f"{owner.split()[0]}, по задаче «{task}» срок {due:%d.%m}. На каком этапе и когда будет готово? "
-                    f"Если что-то мешает — напишите, помогу.\n\n{self.signature}")
-            mid = self.send_mail.send(to, subject, body)
-            self._log("mail_sent", path="now", summary=f"{to}: {subject}",
-                      payload={"to": to, "subject": subject, "body": body, "in_reply_to": None,
-                               "kind": "напоминание", "template": "", "message_id": mid})
             summary = f"Напомнил {owner}: «{task}»"
         elif action == "move":
             summary = f"Срок «{task}» перенесён на {new_due:%d.%m}"
         else:
             summary = f"«{task}» отмечена выполненной"
         self._log("task_action", actor="human", path="now", summary=summary, payload=payload)
+
+    def _task_letter(self, owner: str, task: str, due: date, question: str, kind: str) -> bool:
+        """Письмо исполнителю по задаче. Тема одна и та же — ответ «Re:» находится по ней. False — адресата нет."""
+        who = next((p for p in self.p.org.people if p.name == owner), None) if self.p.org else None
+        if not who:
+            return False
+        to = self.p.org.email_of(who)
+        subject = f"Задача «{task}» — срок {due:%d.%m}"
+        body = f"{owner.split()[0]}, {question} Если что-то мешает — напишите, помогу.\n\n{self.signature}"
+        mid = self.send_mail.send(to, subject, body)
+        self._log("mail_sent", path="now", summary=f"{to}: {subject}",
+                  payload={"to": to, "subject": subject, "body": body, "in_reply_to": None,
+                           "kind": kind, "template": "", "message_id": mid})
+        return True
+
+    def ask_about_task(self, task_id: str, task: str, owner: str, due: date, question: str) -> bool:
+        """Помощник сам выясняет у исполнителя, что с просроченной задачей. Руководителя не зовёт."""
+        if not self._task_letter(owner, task, due, question, "выяснение"):
+            return False
+        self._log("task_action", path="now", summary=f"Спросил {owner}, что с «{task}»",
+                  payload={"task_id": task_id, "action": "ask", "due": None, "minutes_saved": 5})
+        return True
 
     def _decide_letter(self, verdict: str, eid: int):
         self.decide_letter(eid, verdict)

@@ -209,7 +209,7 @@ function taskView(host, id) {
       again();
     });
     if (t.status !== "выполнена") {
-      actions.append(button("Напомнить: " + t.owner.split(" ")[0], () => act("remind"), "primary"),
+      actions.append(button("Спросить ещё раз: " + t.owner.split(" ")[0], () => act("remind")),
         el("label", "task-move", due, button("Перенести срок", () => act("move", {due: due.value}))),
         button("Выполнена", () => act("done"), "quiet"));
     }
@@ -225,6 +225,8 @@ function taskView(host, id) {
         t.why ? el("p", "task-why-main", el("strong", "", "Почему просрочена: "), t.why) : null,
         p.flags.length ? bullets(p.flags, "") : null,
         el("h3", "", "Что дальше"), el("p", "", n.text),
+        p.answer ? el("div", "risk-src", meta(t.owner, stamp(p.answer.at)), el("strong", "", p.answer.subject),
+          el("p", "", p.answer.body)) : null,
         n.meeting ? button("Открыть встречу «" + n.meeting.title + "»", () => openMeeting(n.meeting), "quiet") : null,
         actions, error),
       card("Что известно", "memory",

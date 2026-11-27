@@ -179,6 +179,7 @@ class Stand:
         while True:
             try:
                 with self.lock:             # по одной карточке, чтобы кабинет не ждал всю очередь
+                    cabinet.chase_overdue(self.assistant)     # просроченные задачи: помощник сам спрашивает исполнителя
                     n = self.assistant.prepare_decisions(limit=1)
                 time.sleep(1 if n else 30)
             except Exception as e:          # сбой модели не должен ронять стенд

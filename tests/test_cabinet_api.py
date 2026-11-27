@@ -344,7 +344,7 @@ def test_task_page_has_context_contradiction_and_next_step(env):
     t = r.json()
     assert t["task"]["task"] == "Подготовить КП для «ТехноСтрой»" and t["task"]["owner"] == "Ольга Смирнова"
     assert any("ТехноСтрой" in x["from"] + x["subject"] for x in t["letters"])     # письма клиента по теме
-    assert any("не наступил" in f for f in t["flags"])                            # «просрочена», а срок 24.12
+    assert "не наступил" in t["task"]["why"]                                        # «просрочена», а срок 24.12
     assert t["next"]["text"] and set(t["next"]["actions"]) == {"remind", "move", "done"}
     assert c.get("/api/tasks/nope").status_code == 404
 
@@ -377,3 +377,36 @@ def test_every_overdue_task_says_why(env):
     assert "ещё не наступил" in by_id["t001"]["why"]                              # статус из данных, срок 24.12
     assert "прошёл" in by_id["t005"]["why"]                                       # срок 01.12, сегодня 11.12
     assert all(not t["why"] for t in by_id.values() if not t["overdue"])
+
+
+# ---------------- просроченные задачи: помощник выясняет сам ----------------
+def test_assistant_asks_owners_of_overdue_tasks_itself_once(env):
+    from pomoshnik import cabinet
+    c, a, _ = env
+    before = len(letters(c, direction="out"))
+    n = cabinet.chase_overdue(a)
+    out = letters(c, direction="out")[before:]
+    overdue = [t for t in c.get("/api/tasks").json()["tasks"] if t["overdue"]]
+    assert n == len(out) == len({t["id"] for t in overdue if t["owner"] != "Иван Петров"}) > 0
+    kp = next(x for x in out if "Подготовить КП" in x["subject"])
+    assert kp["to_email"] == "p02@company.example" and "24.12" in kp["body"] and "просрочена" in kp["body"]
+    late = next(x for x in out if "Подписать договор" in x["subject"])
+    assert "прошёл" in late["body"] and "новый срок" in late["body"]
+    assert cabinet.chase_overdue(a) == 0                                        # второй раз не пишет
+    p = c.get("/api/tasks/t001").json()
+    assert "выясняет" in p["task"]["why"] and "ждём ответ" in p["next"]["text"]
+
+
+def test_owner_answer_shows_on_task_page(env):
+    from pomoshnik import cabinet
+    c, a, _ = env
+    cabinet.chase_overdue(a)
+    a.clock.advance(hours=1) if hasattr(a.clock, "advance") else None
+    eid, _ = a.j.record_event("mail", "reply-t001", {"from": "p02@company.example", "from_name": "Ольга Смирнова",
+                                                       "subject": "Re: Задача «Подготовить КП для «ТехноСтрой»»",
+                                                       "body": "Срок не сдвигался, статус ошибочный — КП отправлю 20.12.",
+                                                       "received": "2099-01-01T10:00:00+05:00"})
+    a.j.log_action("mail_в_сводку", event_id=eid, payload={"category": "статус"})
+    p = c.get("/api/tasks/t001").json()
+    assert p["answer"] and "статус ошибочный" in p["answer"]["body"]
+    assert "Ответ пришёл" in p["next"]["text"]

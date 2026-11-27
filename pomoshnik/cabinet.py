@@ -133,14 +133,69 @@ def why_late(t: TaskRow, today: date, source: str) -> str:
         return f"срок {t.due:%d.%m} прошёл {(today - t.due).days} дн. назад, отметки о выполнении нет"
     if t.status == "просрочена":
         where = "в файле задач заказчика" if source == "tasks.csv" else f"в {source}"
-        return f"статус «просрочена» стоит {where}, хотя срок {t.due:%d.%m} ещё не наступил — уточните у исполнителя"
+        return f"статус «просрочена» стоит {where}, хотя срок {t.due:%d.%m} ещё не наступил"
     return ""
 
 
-def task_dict(t: TaskRow, today: date, source: str = "tasks.csv") -> dict:
+def task_dict(t: TaskRow, today: date, source: str = "tasks.csv", asked: dict | None = None) -> dict:
+    why = why_late(t, today, source)
+    if why and asked and t.id in asked:
+        why += f" · помощник выясняет у исполнителя (спросил {asked[t.id]:%d.%m})"
     return {"id": t.id, "task": t.task, "owner": t.owner, "due": t.due.isoformat(), "status": t.status,
             "overdue": t.status not in DONE and (t.status == "просрочена" or t.due < today), "source": source,
-            "why": why_late(t, today, source)}
+            "why": why}
+
+
+def asked_tasks(a: Assistant) -> dict[str, datetime]:
+    """Когда помощник (или руководитель кнопкой) последний раз спрашивал исполнителя о задаче."""
+    out: dict[str, datetime] = {}
+    for x in a.j.actions():
+        pl = x["payload"] or {}
+        if x["kind"] == "task_action" and pl.get("action") in ("ask", "remind"):
+            out[pl["task_id"]] = x["at"]
+    return out
+
+
+ASK_AGAIN = timedelta(days=2)
+
+
+def _question(t: TaskRow, today: date) -> str:
+    if t.due < today:
+        return (f"по задаче «{t.task}» срок {t.due:%d.%m} прошёл. На каком этапе работа и какой новый срок "
+                f"реальный?")
+    return (f"в списке задач у «{t.task}» статус «просрочена», а срок стоит {t.due:%d.%m}. Что не так: срок "
+            f"сдвинулся или что-то мешает?")
+
+
+def chase_overdue(a: Assistant) -> int:
+    """Помощник сам выясняет у исполнителей, что с просроченными задачами: одно письмо, повтор не раньше чем
+    через 2 дня. Задачи самого руководителя не трогает. Возвращает число отправленных вопросов."""
+    today, now, asked, n = a.today(), a.clock.now(), asked_tasks(a), 0
+    for t, src in all_tasks(a):
+        if not why_late(t, today, src) or t.owner == a.p.name:
+            continue
+        if t.id in asked and now - asked[t.id] < ASK_AGAIN:
+            continue
+        if a.ask_about_task(t.id, t.task, t.owner, t.due, _question(t, today)):
+            n += 1
+    return n
+
+
+def _answer(a: Assistant, t: TaskRow, since: datetime) -> dict | None:
+    """Ответ исполнителя после вопроса: письмо от него с темой задачи («Re: Задача «…»»)."""
+    who = next((p for p in a.p.org.people if p.name == t.owner), None) if a.p.org else None
+    if not who:
+        return None
+    email = a.p.org.email_of(who).lower()
+    for x in reversed(a.j.actions()):
+        if x["at"] < since:
+            break
+        if not (x["kind"].startswith("mail_") and x["kind"] != "mail_sent" and x["event_id"]):
+            continue
+        ev = (a.j.event(x["event_id"]) or {}).get("payload") or {}
+        if (ev.get("from") or "").lower() == email and t.task.lower() in (ev.get("subject") or "").lower():
+            return {"at": x["at"].isoformat(), "subject": ev.get("subject", ""), "body": ev.get("body", "")}
+    return None
 
 
 TASK_ACTIONS = ("remind", "move", "done")
@@ -188,7 +243,6 @@ def task_page(a: Assistant, task_id: str) -> dict | None:
     if not found:
         return None
     t, src = found
-    orig = next((x for x in a.tasks if x.id == task_id), t)
     key = _entity(t.task)
     letters, seen = [], set()
     if key:
@@ -205,38 +259,37 @@ def task_page(a: Assistant, task_id: str) -> dict | None:
     if key and a.memory is not None:
         facts = [{"when": f.when.date().isoformat(), "who": f.who, "what": f.what, "quote": f.quote, "source": f.source}
                  for f in a.memory.search(key)[-5:]]
-    flags = []
-    if orig.status == "просрочена" and orig.due >= today:
-        flags.append(f"В данных статус «просрочена», а срок {orig.due:%d.%m} ещё не наступил — уточнить у исполнителя.")
+    flags = []                          # почему просрочена — в task["why"], здесь только дополнительное
     late = t.status not in DONE and (t.due < today or t.status == "просрочена")
-    if t.due < today and t.status not in DONE:
-        flags.append(f"Срок прошёл {(today - t.due).days} дн. назад.")
     if letters:
         flags.append(f"По теме «{key}» писем: {len(letters)}, последнее — {letters[-1]['from']}.")
     hist = task_history(a, task_id)
-    reminded = [h for h in hist if h["action"] == "remind"]
-    first = t.owner.split()[0]
+    asked = asked_tasks(a)
+    answer = _answer(a, t, asked[task_id]) if task_id in asked else None
     meet = next((m for m in a.meetings if m.start.date() >= today and t.owner in m.attendees), None)
     where = f" на встрече «{meet.title}» {meet.start:%d.%m %H:%M}" if meet else " один на один"
     if t.status in DONE:
         text = "Задача закрыта, ничего делать не нужно."
-    elif late and not reminded:
-        text = (f"Нажмите «Напомнить» — помощник напишет исполнителю ({t.owner}) и спросит, на каком этапе и когда "
-                f"будет готово. Ответ придёт в сводку.")
+    elif answer:
+        text = (f"Ответ пришёл от исполнителя ({t.owner}) — прочитайте ниже и решите: перенести срок или "
+                f"отметить выполненной.")
+    elif late and task_id in asked:
+        text = (f"Помощник спросил исполнителя ({t.owner}) {asked[task_id]:%d.%m}, ждём ответ — от вас ничего не нужно. "
+                f"Если ответа не будет 2 дня, помощник спросит ещё раз; можно обсудить{where}.")
     elif late:
-        text = (f"Помощник уже напоминал ({reminded[-1]['at'][:10]}). Если ответа нет — перенесите срок или "
-                f"обсудите{where}.")
+        text = f"Помощник сам спросит исполнителя ({t.owner}), что с задачей, — ответ появится здесь."
     else:
         text = f"Срок {t.due:%d.%m}, всё в рамках — вмешиваться не нужно."
-    return {"task": task_dict(t, today, src), "letters": letters[-6:], "facts": facts, "flags": flags,
-            "history": hist, "next": {"text": text, "actions": list(TASK_ACTIONS),
+    return {"task": task_dict(t, today, src, asked), "letters": letters[-6:], "facts": facts, "flags": flags,
+            "history": hist, "answer": answer, "next": {"text": text, "actions": list(TASK_ACTIONS),
                                       "meeting": {"uid": meet.uid, "title": meet.title, "start": meet.start.isoformat()}
                                       if meet else None}}
 
 
 def tasks(a: Assistant) -> dict:
     today = a.today()
-    return {"tasks": [task_dict(t, today, src) for t, src in all_tasks(a)]}
+    asked = asked_tasks(a)
+    return {"tasks": [task_dict(t, today, src, asked) for t, src in all_tasks(a)]}
 
 
 def meeting_short(m: Meeting, a: Assistant, plist: list[dict] | None = None, links: dict | None = None) -> dict:
@@ -327,7 +380,7 @@ def today(a: Assistant, protocols) -> dict:
                           for g in a.groups()],
             "risks": _risks(a, day), "risk_items": risk_items(a, day),
             "meetings": [meeting_short(m, a, plist) for m in plan.meetings],
-            "overdue": [task_dict(t, day) for t in plan.overdue],
+            "overdue": [task_dict(t, day, asked=asked_tasks(a)) for t in plan.overdue],
             "due_soon": [task_dict(t, day) for t in plan.due_soon],
             "focus": _focus(a.meetings, day),
             "digest": digest_from_journal(a.j, a.p.org)[-10:]}
