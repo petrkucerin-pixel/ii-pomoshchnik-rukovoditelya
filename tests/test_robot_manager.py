@@ -107,7 +107,7 @@ def test_robot_meeting_gives_protocol_from_full_liveavatar_transcript(env):
     assert "Сергей Морозов" in la.prompts[0] and "не видишь, кто говорит" in la.prompts[0]   # участники и правило
     sent = [u for s, u in llm.calls if "секретарь" in s][0]
     assert "Участники встречи в Телемосте: Пит" in sent
-    assert "Участник: Это Пит. Анна отправит отчёт 12-го декабря." in sent      # обрывки склеены, полный текст
+    assert "Пит: Это Пит. Анна отправит отчёт 12-го декабря." in sent   # один во встрече — реплики его; обрывки склеены
     done = kinds(a, "robot_done")[0]["payload"]
     p = a.protocols.get(done["protocol_id"])
     assert p["meeting_uid"] == UID and done["source"] == "liveavatar" and done["reason"] == "встреча завершена"

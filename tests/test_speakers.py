@@ -49,6 +49,18 @@ def test_label_entries_by_overlap_and_skip_robot():
     assert "Пит: Это Пит. Всё по плану." in text and "Ольга Смирнова: А у меня вопрос" in text and "Участник: непонятно кто" in text
 
 
+
+def test_one_person_in_meeting_owns_every_line_even_without_name_in_signals():
+    """Живая проверка 27.11: имя Пита пришло только со страницы, в сигналах Телемоста id без имени → «Участник»."""
+    entries = [{"role": "avatar", "transcript": "Начнём?", "relative_timestamp": 2},
+               {"role": "user", "transcript": "Петр Кучерин говорит.", "relative_timestamp": 6},
+               {"role": "user", "transcript": "Решений нет.", "relative_timestamp": 40}]
+    ev = [(T0 + 5500, "p-x", True), (T0 + 9000, "p-x", False)]
+    out = label_entries(entries, ev, T0, {}, robot_name="ИИ-помощник Ивана Петрова", solo="Петр Кучерин")
+    assert [e.get("speaker") for e in out] == [None, "Петр Кучерин", "Петр Кучерин"]
+    two = label_entries(entries, ev, T0, {}, robot_name="ИИ-помощник Ивана Петрова")
+    assert [e.get("speaker") for e in two] == [None, "Участник", None]
+
 def test_resolve_and_learn_aliases(tmp_path):
     assert resolve_name("Ольга Смирнова", ORG) == "Ольга Смирнова"
     assert resolve_name("Пит", ORG) is None

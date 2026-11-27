@@ -68,8 +68,10 @@ def intervals(events, end: float) -> dict[str, list[tuple[float, float]]]:
 
 
 def label_entries(entries: list[dict], events, t0_ms: float, people: dict, *, robot_name: str,
-                  aliases: dict | None = None) -> list[dict]:
-    """Реплики LiveAvatar (relative_timestamp от начала сессии) + лента vad → у реплик участников поле speaker."""
+                  aliases: dict | None = None, solo: str | None = None) -> list[dict]:
+    """Реплики LiveAvatar (relative_timestamp от начала сессии) + лента vad → у реплик участников поле speaker.
+
+    solo — единственный человек во встрече кроме аватара: все реплики участников его, даже без имени в сигналах."""
     aliases = aliases or {}
     order = sorted(entries, key=lambda e: e.get("relative_timestamp", 0))
     starts = [t0_ms + (e.get("relative_timestamp", 0) - PRE_S) * 1000 for e in order]
@@ -78,7 +80,10 @@ def label_entries(entries: list[dict], events, t0_ms: float, people: dict, *, ro
     out = []
     for i, e in enumerate(order):
         e = dict(e)
-        if e.get("role") != "avatar":
+        if e.get("role") != "avatar" and solo:
+            e["speaker_raw"] = solo
+            e["speaker"] = aliases.get(solo, solo)
+        elif e.get("role") != "avatar":
             a = starts[i]
             b = starts[i + 1] if i + 1 < len(order) else a + DEFAULT_S * 1000
             best, best_pid = 0.0, None

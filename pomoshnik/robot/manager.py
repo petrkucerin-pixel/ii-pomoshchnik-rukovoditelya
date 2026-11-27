@@ -167,7 +167,12 @@ class RobotManager:
         entries = [{"role": x["role"], "transcript": x["text"], "relative_timestamp": (x["t"] - t0) / 1000}
                    for x in st.transcript]
         return label_entries(entries, st.vad_events, t0, st.people, robot_name=self.name(),
-                             aliases=aliases_from_journal(self._a().j))
+                             aliases=aliases_from_journal(self._a().j), solo=self._solo(st))
+
+    def _solo(self, st: RobotState) -> str | None:
+        """Единственный человек во встрече (кроме аватара) — ему принадлежат все реплики участников."""
+        people = {n for n in [*st.participants, *st.people.values()] if n and n != self.name()}
+        return next(iter(people)) if len(people) == 1 else None
 
     def live_tick(self, robot: Robot, *, force: bool = False) -> bool:
         """Черновик договорённостей по расшифровке, накопленной к этому моменту. True — обновили."""
@@ -238,10 +243,10 @@ class RobotManager:
         a = self._a()
         # кто говорил: лента vad из Телемоста; новые связки «подпись → человек» запоминаем
         labeled = label_entries(entries, st.vad_events, st.session_at or st.started, st.people,
-                                robot_name=self.name(), aliases=aliases_from_journal(a.j))
+                                robot_name=self.name(), aliases=aliases_from_journal(a.j), solo=self._solo(st))
         if learn_aliases(a.j, labeled, a.p.org):
             labeled = label_entries(entries, st.vad_events, st.session_at or st.started, st.people,
-                                    robot_name=self.name(), aliases=aliases_from_journal(a.j))
+                                    robot_name=self.name(), aliases=aliases_from_journal(a.j), solo=self._solo(st))
         text = transcript_to_text(labeled, merge=True)
         aliases = aliases_from_journal(a.j)
         st.participants = {aliases.get(n) or resolve_name(n, a.p.org) or n for n in st.participants}
