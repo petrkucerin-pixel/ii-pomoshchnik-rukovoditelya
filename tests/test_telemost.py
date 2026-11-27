@@ -58,4 +58,4 @@ def test_env_example_lists_telemost_token_without_values():
         if "=" in line and not line.lstrip().startswith("#"):
             key, value = line.split("=", 1)
             assert value.strip() in ("", "anthropic", "deepseek", "yandex", "ivan_petrov", "операционная",
-                                     "Ивана Петрова", "https://api.deepseek.com", "deepseek-flash"), key
+                                     "Ивана Петрова", "https://api.deepseek.com", "deepseek-flash", "1"), key

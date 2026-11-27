@@ -81,10 +81,18 @@ def test_case4_boss_letter_always_to_leader(ivan):
     assert d.action == "спросить_руководителя" and "руководителя руководителя" in d.reason
 
 
-def test_case5_low_confidence_to_leader(ivan):
-    llm = StubLLM(default={"category": "отчёт", "summary": "отчёт", "confidence": 0.3})
+@pytest.mark.parametrize("category", ["деньги", "рассылка", "продажи"])
+def test_case5_low_confidence_to_leader(ivan, category):
+    llm = StubLLM(default={"category": category, "summary": "?", "confidence": 0.3})
     d = triage(ivan, llm, subject="?", body="?", from_name="X", from_email="p07@company.example")
     assert d.action == "спросить_руководителя" and "уверенность" in d.reason
+
+
+def test_case5_low_confidence_summary_rule_still_goes_to_summary(ivan):
+    """«В сводку» ничего не отправляет наружу, а руководитель письмо всё равно увидит — сомнение не повод его звать."""
+    llm = StubLLM(default={"category": "отчёт", "summary": "дашборд", "confidence": 0.55})
+    d = triage(ivan, llm, subject="Дашборд", body="?", from_name="Алексей", from_email="p07@company.example")
+    assert d.action == "в_сводку" and "0.55" in d.reason
 
 
 def test_case6_unknown_category_from_model_rejected(ivan):

@@ -187,8 +187,9 @@ def today(a: Assistant, protocols) -> dict:
     plist = _protocol_rows(a)
     return {"day": day.isoformat(), "leader": a.p.name,
             "metrics": compute_metrics(a.j, protocols)["cards"],
-            "decisions": [{k: d[k] for k in ("event_id", "at", "from", "subject", "summary", "reason")}
-                          for d in a.decisions],
+            "decisions": [{k: g[k] for k in ("event_id", "at", "from", "subject", "summary", "reason", "count",
+                                              "prepared")}
+                          for g in a.groups()],
             "risks": _risks(a, day),
             "meetings": [meeting_short(m, a, plist) for m in plan.meetings],
             "overdue": [task_dict(t, day) for t in plan.overdue],

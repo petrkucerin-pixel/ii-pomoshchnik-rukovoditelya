@@ -362,3 +362,16 @@ select { width: 100%; min-height: 44px; padding: 9px 12px; border-radius: var(--
 .live-talk { max-height: 360px; overflow: auto; display: grid; gap: 6px; }
 .live-talk p { margin: 0; padding: 6px 10px; border-radius: 10px; background: rgba(255, 255, 255, .55); font-size: .9rem; }
 .dashboard.live { margin-top: 10px; }
+
+/* карточка решения с готовым ответом (TASK_12) */
+.decision-times { padding: 2px 9px; border-radius: 999px; background: rgba(240, 138, 115, .16); color: var(--coral-ink); font-weight: 600; font-size: .8rem; }
+.decision-prep { margin-top: 10px; display: grid; gap: 8px; min-width: 0; }
+.decision-advice { margin: 0; overflow-wrap: anywhere; }
+.decision-advice--none { color: var(--muted); }
+.decision-facts { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: .9rem; overflow-wrap: anywhere; }
+.decision-kind { display: inline-block; margin-right: 6px; padding: 0 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); font-size: .76rem; }
+.decision-note { color: var(--muted); }
+.decision-draft { display: grid; gap: 4px; font-size: .85rem; color: var(--muted); }
+.decision-draft textarea { color: var(--text, #20313c); font-size: .95rem; }
+.decision-warn { margin: 0; color: var(--coral-ink); font-size: .87rem; }
+.decision-wait { font-style: italic; }

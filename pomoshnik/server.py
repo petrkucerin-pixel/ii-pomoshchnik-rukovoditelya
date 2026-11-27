@@ -162,8 +162,29 @@ class Stand:
                                                if c.strip()})
 
     def _new_assistant(self) -> Assistant:
-        return Assistant(self.profile, self.llm, self.pult, self.mail, self.journal, self.protocols,
-                         calendar_path=TASK / "calendar.ics", tasks_path=TASK / "tasks.csv", memory=self.memory)
+        a = Assistant(self.profile, self.llm, self.pult, self.mail, self.journal, self.protocols,
+                      calendar_path=TASK / "calendar.ics", tasks_path=TASK / "tasks.csv", memory=self.memory)
+        a.recheck_queue()                   # правила профиля могли поменяться: очередь пересматривается по новым
+        return a
+
+    def start_preparer(self):
+        """Фоном готовит карточки решений: черновик, совет, факты. Включается PREPARE_DECISIONS=1 в .env."""
+        if os.environ.get("PREPARE_DECISIONS", "").lower() not in ("1", "true", "yes"):
+            self.status["preparer"] = "выключен"
+            return
+        self.status["preparer"] = "работает"
+        threading.Thread(target=self._preparer_loop, daemon=True).start()
+
+    def _preparer_loop(self):
+        while True:
+            try:
+                with self.lock:             # по одной карточке, чтобы кабинет не ждал всю очередь
+                    n = self.assistant.prepare_decisions(limit=1)
+                time.sleep(1 if n else 30)
+            except Exception as e:          # сбой модели не должен ронять стенд
+                log.exception("подготовка решений")
+                self.status["preparer"] = f"ошибка: {type(e).__name__}"
+                time.sleep(60)
 
     def start_autopilot(self):
         """Аватар сам по календарю (TASK_09): шаг раз в 20 секунд, если настроен LiveAvatar."""
@@ -244,6 +265,7 @@ async def _lifespan(_app):
     stand = Stand()
     stand.start_bot()
     stand.start_autopilot()
+    stand.start_preparer()
     yield
 
 
@@ -673,6 +695,7 @@ summary{{cursor:pointer;min-height:24px}} li{{margin:4px 0}}
 # ---------------- API кабинета (TASK_07, контракт в TASK_08_КАБИНЕТ_GPT.md) ----------------
 class DecisionIn(BaseModel):
     verdict: Literal["yes", "no", "later"]
+    text: str | None = None          # ответ руководителя вместо черновика помощника
 
 
 class TemplateIn(BaseModel):
@@ -706,7 +729,7 @@ def api_today():
 @app.post("/api/decisions/{event_id}")
 def api_decide(event_id: int, d: DecisionIn):
     with stand.lock:
-        if not stand.assistant.decide_letter(event_id, d.verdict, notify=False):
+        if not stand.assistant.decide_letter(event_id, d.verdict, notify=False, text=d.text):
             raise HTTPException(404, "такого письма нет среди ждущих решения")
     return {"ok": True}
 

@@ -6,7 +6,11 @@ from yadro.journal import Journal
 
 def compute_metrics(j: Journal, protocols=None) -> dict:
     acts = j.actions()
-    mail = [a for a in acts if a["kind"].startswith("mail_") and a["kind"] != "mail_sent"]   # входящие, не исходящие
+    last: dict = {}                  # входящие, не исходящие; после пересмотра очереди считаем последний разбор письма
+    for a in acts:
+        if a["kind"].startswith("mail_") and a["kind"] != "mail_sent":
+            last[a["event_id"] if a["event_id"] is not None else ("action", a["id"])] = a
+    mail = list(last.values())
     without = [a for a in mail if a["kind"] != "mail_спросить_руководителя"]
     saved_min = sum(a["payload"].get("minutes_saved", 0) for a in acts)
     # Отрицательное время бывает, когда встреча из учебного календаря «в будущем» относительно часов стенда — не считаем.
@@ -14,7 +18,7 @@ def compute_metrics(j: Journal, protocols=None) -> dict:
               if a["kind"] == "protocol_draft" and a["payload"]["minutes_to_draft"] >= 0]
     approved = [a["payload"]["minutes_to_approved"] for a in acts
                 if a["kind"] == "protocol_sent" and a["payload"].get("minutes_to_approved") is not None]
-    edits = sum(1 for a in acts if a["kind"] == "protocol_edit")
+    edits = sum(1 for a in acts if a["kind"] in ("protocol_edit", "decision_draft_edit"))
     cost = j.cost()
     res = {
         "letters": len(mail),

@@ -63,6 +63,10 @@ def decide(profile: Profile, category: str, from_email: str, *, summary: str = "
         return Decision("спросить_руководителя", "", "категорию определить не удалось", summary=summary,
                         confidence=confidence, sender_role=role)
     if confidence < MIN_CONFIDENCE:
+        rule = profile.action_for(category)
+        if rule.action == "в_сводку":       # ничего не уходит наружу, а руководитель всё равно увидит письмо в сводке
+            return Decision("в_сводку", category, f"{rule.source} Разбор неуверенный ({confidence:.2f}), поэтому "
+                            "только в сводку", summary=summary, confidence=confidence, sender_role=role)
         return Decision("спросить_руководителя", category, f"низкая уверенность разбора: {confidence:.2f}",
                         summary=summary, confidence=confidence, sender_role=role)
     rule = profile.action_for(category)

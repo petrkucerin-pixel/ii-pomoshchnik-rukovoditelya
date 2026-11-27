@@ -134,15 +134,17 @@ def test_decision_from_cabinet_sends_letter_and_survives_restart(env):
     c, a, _ = env
     dec = c.get("/api/today").json()["decisions"]
     asked = sum(1 for x in a.j.actions() if x["kind"] == "mail_спросить_руководителя")
-    assert len(dec) == asked > 0
+    assert sum(d["count"] for d in dec) == asked > len(dec) > 0          # повторы склеены в один вопрос
+    assert all("prepared" in d for d in dec)
     first = dec[0]
-    assert c.post(f"/api/decisions/{first['event_id']}", json={"verdict": "yes"}).json() == {"ok": True}
+    assert c.post(f"/api/decisions/{first['event_id']}",
+                  json={"verdict": "yes", "text": "Подтверждаю, работаем."}).json() == {"ok": True}
     assert first["event_id"] not in [d["event_id"] for d in c.get("/api/today").json()["decisions"]]
     sent = letters(c, direction="out", category="решение")
     assert sent and sent[-1]["subject"] == f"Re: {first['subject']}"
     srv.stand.restart_assistant()
-    after = [d["event_id"] for d in srv.stand.assistant.decisions]
-    assert first["event_id"] not in after and len(after) == len(dec) - 1     # остальные ждут, как и ждали
+    after = srv.stand.assistant.groups()
+    assert first["event_id"] not in [g["event_id"] for g in after] and len(after) == len(dec) - 1
     assert c.post("/api/decisions/999999", json={"verdict": "yes"}).status_code == 404
     assert c.post(f"/api/decisions/{dec[1]['event_id']}", json={"verdict": "maybe"}).status_code == 422
 

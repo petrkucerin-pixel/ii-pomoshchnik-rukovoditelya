@@ -11,9 +11,11 @@ import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 from yadro.journal import Journal
 
+from . import decisions as dq
 from .channels.telegram import Button, Update
 from .memory import brief, collapse, extract_facts, period
 from .plan import Meeting, build_day_plan, load_calendar, load_tasks, render_plan
@@ -98,19 +100,29 @@ def letter_payload(e) -> dict:
             "subject": e.subject, "body": e.body, "received": rec.isoformat() if rec else None}
 
 
+def is_mail_route(kind: str) -> bool:
+    """Действие разбора входящего письма (не исходящее письмо)."""
+    return kind.startswith("mail_") and kind != "mail_sent"
+
+
 def decisions_from_journal(journal: Journal) -> list[dict]:
-    """Письма «ждут только вас», по которым руководитель ещё не решил. «Позже» — остаётся в очереди."""
-    asked, decided = [], set()
+    """Письма «ждут только вас», по которым руководитель ещё не решил. «Позже» — остаётся в очереди.
+
+    Решает последний разбор письма: после пересмотра по новым правилам письмо может уйти из очереди."""
+    last, decided, order = {}, set(), []
     for a in journal.actions():
-        if a["kind"] == "mail_спросить_руководителя":
-            asked.append(a)
+        if is_mail_route(a["kind"]):
+            if a["event_id"] not in last:
+                order.append(a["event_id"])
+            last[a["event_id"]] = a
         elif a["kind"] == "letter_decided":
             verdict = (a["payload"] or {}).get("verdict") or a["summary"].split(":", 1)[0]
             if verdict in ("yes", "no"):
                 decided.add(a["event_id"])
     out = []
-    for a in asked:
-        if a["event_id"] in decided:
+    for eid in order:
+        a = last[eid]
+        if a["kind"] != "mail_спросить_руководителя" or eid in decided:
             continue
         ev = journal.event(a["event_id"]) or {}
         pl, ap = ev.get("payload") or {}, a["payload"] or {}
@@ -119,8 +131,35 @@ def decisions_from_journal(journal: Journal) -> list[dict]:
                     "from": pl.get("from_name") or pl.get("from", ""), "email": pl.get("from", ""),
                     "subject": subject, "summary": ap.get("summary") or subject,
                     "reason": ap.get("reason") or a["summary"].removeprefix(subject + " — "),
-                    "id": ev.get("external_id", "")})
+                    "category": ap.get("category", ""), "id": ev.get("external_id", "")})
     return out
+
+
+def held_from_journal(journal: Journal) -> list[dict]:
+    """Передачи, которые ждут решения руководителя по тому же человеку (доступ ждёт оффер)."""
+    held, released = {}, set()
+    for a in journal.actions():
+        pl = a["payload"] or {}
+        if is_mail_route(a["kind"]):
+            held.pop(a["event_id"], None)
+            if a["kind"] == "mail_делегировать" and pl.get("after"):
+                held[a["event_id"]] = {"event_id": a["event_id"], "after": pl["after"], "delegate_to": pl["delegate_to"]}
+        elif a["kind"] == "delegation_released":
+            released.add(a["event_id"])
+    return [h for eid, h in held.items() if eid not in released]
+
+
+def prepared_from_journal(journal: Journal) -> dict[str, dict]:
+    return {a["payload"]["key"]: a["payload"] for a in journal.actions() if a["kind"] == "decision_prepared"}
+
+
+def letter_ns(journal: Journal, eid: int) -> SimpleNamespace:
+    """Письмо из журнала в том же виде, что приходит из почты."""
+    ev = journal.event(eid) or {}
+    pl = ev.get("payload") or {}
+    rec = datetime.fromisoformat(pl["received"]) if pl.get("received") else None
+    return SimpleNamespace(id=ev.get("external_id", ""), from_email=pl.get("from", ""), from_name=pl.get("from_name", ""),
+                           to=pl.get("to", ""), subject=pl.get("subject", ""), body=pl.get("body", ""), received=rec)
 
 
 def meetings_from_journal(journal: Journal) -> list[Meeting]:
@@ -145,6 +184,8 @@ class Assistant:
         self.tasks = load_tasks(tasks_path)
         self.pending: Pending | None = None
         self.decisions: list[dict] = decisions_from_journal(journal)   # письма, которые ждут руководителя
+        self.held: list[dict] = held_from_journal(journal)              # передачи, ждущие решения руководителя
+        self.prepared: dict[str, dict] = prepared_from_journal(journal)  # готовые решения по вопросам очереди
         self.templates = Templates(profile.dir)
         self.digest: list[str] = []
         self.risks: list[str] = []           # риски для целей руководителя от ревизора
@@ -273,10 +314,16 @@ class Assistant:
             n += 1
         return n
 
-    def _act(self, e, d: Decision, eid: int, report: Report | None = None):
+    def _act(self, e, d: Decision, eid: int, report: Report | None = None, *, recheck: bool = False):
         path = "decision" if d.action == "спросить_руководителя" else "now"
-        payload = {"category": d.category, "delegate_to": d.delegate_to, "minutes_saved": MINUTES_SAVED[d.action],
-                   "reason": d.reason, "summary": d.summary}
+        saved = MINUTES_SAVED[d.action] - (MINUTES_SAVED["спросить_руководителя"] if recheck else 0)
+        payload = {"category": d.category, "delegate_to": d.delegate_to, "minutes_saved": saved,
+                   "reason": d.reason, "summary": d.summary, "confidence": d.confidence}
+        after = self._hr_question_about(e) if d.action == "делегировать" else []
+        if after:
+            payload["after"] = after
+        if recheck:
+            payload["recheck"] = True
         if report:      # отчёт хранится в журнале, чтобы ревизор видел его и после перезапуска
             payload["report"] = {"id": report.id, "from_name": report.from_name, "from_email": report.from_email,
                                  "received": report.received.isoformat(), "subject": report.subject,
@@ -285,13 +332,13 @@ class Assistant:
         if d.action == "спросить_руководителя":
             rec = getattr(e, "received", None)
             self.decisions.append({"event_id": eid, "at": rec.isoformat() if rec else self.clock.now().isoformat(),
-                                   "from": e.from_name, "subject": e.subject,
+                                   "from": e.from_name, "subject": e.subject, "category": d.category,
                                    "summary": d.summary, "reason": d.reason, "email": e.from_email, "id": e.id})
+        elif d.action == "делегировать" and after:
+            self.held.append({"event_id": eid, "after": after, "delegate_to": d.delegate_to})
+            self.digest.append(f"Ждёт вашего кадрового решения, потом уйдёт исполнителю: {e.subject}")
         elif d.action == "делегировать" and self.p.org:
-            who = self.p.org.by_id[d.delegate_to]
-            self.send(self.p.org.email_of(who), "delegate", "передача", in_reply_to=e.id, event_id=eid,
-                      имя=who.name.split()[0], тема=e.subject, отправитель=e.from_name, текст=e.body)
-            self.digest.append(f"Передано {who.name}: {e.subject}")
+            self._forward(e, d.delegate_to, eid)
         elif d.action == "авто":
             self.send(e.from_email, "auto_reply", "автоответ", in_reply_to=e.id, event_id=eid,
                       тема=e.subject, отправитель=e.from_name)
@@ -299,48 +346,174 @@ class Assistant:
         elif d.action == "в_сводку":
             self.digest.append(f"{e.from_name}: {d.summary or e.subject}")
 
+    def _forward(self, e, delegate_to: str, eid: int, note: str = ""):
+        who = self.p.org.by_id[delegate_to]
+        self.send(self.p.org.email_of(who), "delegate", "передача", in_reply_to=e.id, event_id=eid,
+                  имя=who.name.split()[0], тема=e.subject, отправитель=e.from_name, текст=e.body)
+        self.digest.append(f"Передано {who.name}: {e.subject}{note}")
+
+    def _hr_question_about(self, e) -> list[int]:
+        """Открытое кадровое решение про того же человека: передача ждёт его (доступ — после оффера)."""
+        people = dq.names(f"{e.subject} {e.body}", exclude=(self.p.name,))
+        if not people:
+            return []
+        for g in self.groups():
+            if g.get("category") != "кадры":
+                continue
+            ev = self.j.event(g["event_ids"][0]) or {}
+            if people & dq.names(f"{g['subject']} {(ev.get('payload') or {}).get('body', '')}", exclude=(self.p.name,)):
+                return list(g["event_ids"])
+        return []
+
+    def _release(self, eids: list[int], verdict: str, subject: str):
+        """Кадровое решение принято: ждавшие его передачи уходят исполнителю, при отказе — снимаются."""
+        done = set(eids)
+        sent = set()
+        for h in [h for h in self.held if done & set(h["after"])]:
+            self.held.remove(h)
+            e = letter_ns(self.j, h["event_id"])
+            key = dq.group_key(e.from_email, e.subject)
+            if key not in sent:                 # копии одного письма передаём один раз
+                sent.add(key)
+                if verdict == "yes" and self.p.org:
+                    self._forward(e, h["delegate_to"], h["event_id"], note=f" (после вашего решения: {subject})")
+                else:
+                    self.digest.append(f"Не передано: {e.subject} — по «{subject}» вы отказали")
+            self._log("delegation_released", event_id=h["event_id"], path="now", summary=f"{verdict}: {e.subject}",
+                      payload={"verdict": verdict, "after": subject})
+
+    def recheck_queue(self) -> int:
+        """Пересмотр очереди по текущим правилам профиля: письма, которым руководитель больше не нужен, уходят сами.
+
+        Повторный запуск ничего не меняет. Возвращает, сколько писем ушло из очереди."""
+        moved = 0
+        for x in list(self.decisions):
+            last = [a for a in self.j.actions(x["event_id"]) if is_mail_route(a["kind"])][-1]
+            pl = last["payload"] or {}
+            conf = pl.get("confidence")
+            if conf is None:                    # старые записи: уверенность только в тексте причины
+                m = re.search(r"уверенность разбора: ([\d.]+)", pl.get("reason", ""))
+                conf = float(m.group(1)) if m else 1.0
+            d = decide(self.p, pl.get("category", ""), x["email"], summary=pl.get("summary", ""), confidence=conf)
+            if d.action == "спросить_руководителя":
+                continue
+            self.decisions.remove(x)
+            e = letter_ns(self.j, x["event_id"])
+            report = Report(e.id, e.from_name, e.from_email, e.received or self.clock.now(), e.subject, e.body) \
+                if d.category in REPORT_CATEGORIES else None
+            self._act(e, d, x["event_id"], report, recheck=True)
+            if report:
+                self.reports.append(report)
+            moved += 1
+        if moved:
+            self._log("queue_rechecked", summary=f"по новым правилам ушло из очереди: {moved}", payload={"moved": moved})
+        return moved
+
+    # ---------------- очередь решений ----------------
+    def groups(self) -> list[dict]:
+        """Вопросы к руководителю: копии одного письма — одна карточка, с готовым решением, если оно подготовлено."""
+        return [{**g, "prepared": self.prepared.get(g["key"])} for g in dq.group(self.decisions)]
+
+    def prepare_decisions(self, limit: int | None = None) -> int:
+        """Готовит решения по вопросам без подготовки: черновик, совет, факты с источниками. Один вызов модели на вопрос."""
+        n = 0
+        for g in self.groups():
+            if g["prepared"] or (limit is not None and n >= limit):
+                continue
+            e = letter_ns(self.j, g["event_ids"][-1])
+            letter = f"{e.subject}\n{e.body}"
+            srcs = dq.sources(letter, goals=self.p.goals, tasks=self.tasks, meetings=self.meetings, memory=self.memory,
+                              org=self.p.org, sender_email=e.from_email, today=self.today())
+            p = {**dq.prepare(self.llm, g, letter, srcs, self.p.style, self.p.name), "key": g["key"]}
+            self.prepared[g["key"]] = p
+            self._log("decision_prepared", event_id=g["event_id"], path="now",
+                      summary=f"{g['subject']}: совет — {p['advice']}, фактов {len(p['facts'])}", payload=p)
+            n += 1
+        return n
+
     # ---------------- план дня ----------------
     def morning_plan(self, day: date) -> int:
         items = [f"⚠️ {r}" for r in self.risks[-3:]]
-        items += [f"{x['from']}: {x['subject']} — {x['reason']}" for x in self.decisions[:10]]
-        if len(self.decisions) > 10:
-            items.append(f"…и ещё {len(self.decisions) - 10}")
+        gs = self.groups()
+        items += [f"{x['from']}: {x['subject']}{self._times(x)} — {x['reason']}" for x in gs[:10]]
+        if len(gs) > 10:
+            items.append(f"…и ещё {len(gs) - 10}")
         plan = build_day_plan(day, self.meetings, self.tasks, decisions=items, digest=self.digest[-8:])
         text = render_plan(plan, self.p.name)
         buttons = [[Button("Решения по одному", "dec:next")]] if self.decisions else None
         mid = self.pult.send_buttons(text, buttons) if buttons else self.pult.send_text(text)
-        self._log("morning_plan", summary=f"{day.isoformat()}: встреч {len(plan.meetings)}, решений {len(self.decisions)}")
+        self._log("morning_plan", summary=f"{day.isoformat()}: встреч {len(plan.meetings)}, решений {len(gs)}")
         return mid
 
+    @staticmethod
+    def _times(g: dict) -> str:
+        return f" (пишут {g['count']}-й раз)" if g["count"] > 1 else ""
+
     def _next_decision(self):
-        if not self.decisions:
+        gs = self.groups()
+        if not gs:
             self.pult.send_text("Решений, которые ждут вас, больше нет.")
             return
-        x = self.decisions[0]
-        self.pult.send_buttons(
-            f"<b>{html.escape(x['from'])}</b>: {html.escape(x['subject'])}\n{html.escape(x['summary'])}\n"
-            f"<i>Почему к вам: {html.escape(x['reason'])}</i>",
-            [[Button("Согласовать", f"dec:yes:{x['event_id']}"), Button("Отказать", f"dec:no:{x['event_id']}")],
-             [Button("Позже", f"dec:later:{x['event_id']}")]])
+        x, e = gs[0], html.escape
+        lines = [f"<b>{e(x['from'])}</b>: {e(x['subject'])}{self._times(x)}", e(x["summary"]),
+                 f"<i>Почему к вам: {e(x['reason'])}</i>"]
+        p = x["prepared"]
+        if p:
+            if p["advice"] != "нет совета":
+                lines.append(f"\n<b>Совет: {e(p['advice'])}</b> — {e(p['why'])}")
+            lines += [f"• {e(f['text'])} <i>({e(f['kind'])})</i>" for f in p["facts"][:4]]
+            if p["draft"]:
+                lines.append(f"\n<b>Ответ, если согласуете:</b>\n{e(p['draft'])}")
+            if p["unverified"]:
+                lines.append(f"⚠️ Проверьте цифры: {e(', '.join(p['unverified']))}")
+        eid = x["event_id"]
+        self.pult.send_buttons("\n".join(lines),
+                               [[Button("Согласовать", f"dec:yes:{eid}"), Button("Отказать", f"dec:no:{eid}")],
+                                [Button("Позже", f"dec:later:{eid}")]])
 
-    def decide_letter(self, eid: int, verdict: str, *, notify: bool = True) -> bool:
-        """Решение руководителя по письму: из Telegram или из кабинета. False — такого письма в очереди нет."""
+    def decide_letter(self, eid: int, verdict: str, *, notify: bool = True, text: str | None = None) -> bool:
+        """Решение руководителя по вопросу: из Telegram или из кабинета. Закрывает все копии письма одним ответом.
+
+        «Согласовать» отправляет подготовленный черновик или текст руководителя. False — такого письма в очереди нет."""
         if verdict not in ("yes", "no", "later"):
             raise ValueError(verdict)
-        x = next((d for d in self.decisions if d["event_id"] == eid), None)
-        if not x:
+        g = next((x for x in self.groups() if eid in x["event_ids"]), None)
+        if not g:
             return False
-        self.decisions.remove(x)
+        letters = [d for d in self.decisions if d["event_id"] in g["event_ids"]]
+        for d in letters:
+            self.decisions.remove(d)
         if verdict == "later":
-            self.decisions.append(x)
+            self.decisions.extend(letters)
         else:
-            self.send(x["email"], "decision_yes" if verdict == "yes" else "decision_no", "решение",
-                      in_reply_to=x["id"], event_id=eid, тема=x["subject"], отправитель=x["from"])
-        self._log("letter_decided", actor="human", path="decision", event_id=eid, summary=f"{verdict}: {x['subject']}",
-                  payload={"verdict": verdict})
+            draft = (g["prepared"] or {}).get("draft", "")
+            body = (text or "").strip() or (draft if verdict == "yes" else "")
+            if body:
+                self._reply(g, body)
+                if text and text.strip() != draft:
+                    self._log("decision_draft_edit", actor="human", path="decision", event_id=g["event_id"],
+                              summary=f"{g['subject']}: руководитель поправил ответ",
+                              payload={"key": g["key"], "draft": draft, "text": text.strip()})
+            else:
+                self.send(g["email"], "decision_yes" if verdict == "yes" else "decision_no", "решение",
+                          in_reply_to=g["id"], event_id=g["event_id"], тема=g["subject"], отправитель=g["from"])
+        for d in letters:
+            self._log("letter_decided", actor="human", path="decision", event_id=d["event_id"],
+                      summary=f"{verdict}: {d['subject']}", payload={"verdict": verdict, "key": g["key"]})
+        if verdict != "later":
+            self._release(g["event_ids"], verdict, g["subject"])
         if notify:
             self._next_decision()
         return True
+
+    def _reply(self, g: dict, body: str):
+        """Ответ руководителя своим текстом (черновик помощника или правка), не по шаблону."""
+        subject = f"Re: {g['subject']}"
+        full = f"{body}\n\n— {self.p.name} (через ИИ-помощника)"
+        mid = self.send_mail.send(g["email"], subject, full, in_reply_to=g["id"])
+        self._log("mail_sent", path="now", event_id=g["event_id"], summary=f"{g['email']}: {subject}",
+                  payload={"to": g["email"], "subject": subject, "body": full, "in_reply_to": g["id"],
+                           "kind": "решение", "template": "", "message_id": mid})
 
     def _decide_letter(self, verdict: str, eid: int):
         self.decide_letter(eid, verdict)
