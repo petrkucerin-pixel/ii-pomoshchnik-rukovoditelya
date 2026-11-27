@@ -181,6 +181,23 @@ def chase_overdue(a: Assistant) -> int:
     return n
 
 
+def task_questions(a: Assistant, names: set[str]) -> list[str]:
+    """Для встречи: по задачам участников, о которых помощник спрашивал, — что ответили или что ответа нет."""
+    asked, out = asked_tasks(a), []
+    for t, _ in all_tasks(a):
+        if t.id not in asked or t.owner not in names or t.status in DONE:
+            continue
+        ans = _answer(a, t, asked[t.id])
+        if ans:
+            body = " ".join(ans["body"].split())[:180]
+            out.append(f"{t.owner} — {t.task}: ответ от {ans['at'][8:10]}.{ans['at'][5:7]}: «{body}». "
+                       f"Подтвердите срок и следующий шаг.")
+        else:
+            out.append(f"{t.owner} — {t.task}: помощник спрашивал {asked[t.id]:%d.%m}, ответа нет. "
+                       f"Что с задачей и какой срок реальный?")
+    return out
+
+
 def _answer(a: Assistant, t: TaskRow, since: datetime) -> dict | None:
     """Ответ исполнителя после вопроса: письмо от него с темой задачи («Re: Задача «…»»)."""
     who = next((p for p in a.p.org.people if p.name == t.owner), None) if a.p.org else None
@@ -436,7 +453,7 @@ def meeting(a: Assistant, uid: str) -> dict | None:
     same = [p for p in approved if p["title"] == m.title] or approved
     prev = questions_from_previous(a.protocols.protocol(same[-1]["id"], a.p.org)) if same else []
     _, hq = meeting_brief(a.j, None, a.today())
-    hq = [q for q in hq if q.split(" — ", 1)[0] in names] or hq
+    hq = task_questions(a, names) + ([q for q in hq if q.split(" — ", 1)[0] in names] or hq)
     today_ = a.today()
     own = [task_dict(t, today_, src) for t, src in all_tasks(a) if t.owner in names and t.status not in DONE]
     return {"meeting": short, "previous_questions": prev, "history_questions": hq, "tasks": own,

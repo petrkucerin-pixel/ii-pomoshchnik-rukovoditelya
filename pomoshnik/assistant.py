@@ -334,6 +334,11 @@ class Assistant:
             cat, summ, conf = classify(self.llm, e.subject, e.body, e.from_name)
             d = decide(self.p, cat, e.from_email, summary=summ or e.subject, confidence=conf)
             rec = getattr(e, "received", None) or self.clock.now()
+            asked = self._asked_subject(e)
+            if asked:                            # ответ исполнителя на вопрос помощника о задаче — узнаёт код
+                d = Decision("в_сводку", cat or "статус", "ответ исполнителя на вопрос помощника о задаче",
+                             summary=summ or e.subject, confidence=conf, sender_role=d.sender_role)
+                self._remember_answer(e, asked, rec, eid)
             report = Report(e.id, e.from_name, e.from_email, rec, e.subject, e.body) \
                 if d.category in REPORT_CATEGORIES else None
             self._act(e, d, eid, report)
@@ -346,6 +351,35 @@ class Assistant:
             self._log("inbox_done", summary=json.dumps(counts, ensure_ascii=False), payload=counts)
             counts["ревизор"] = self.review_reports()
         return counts
+
+    def _asked_subject(self, e) -> str:
+        """Тема вопроса помощника, на который это письмо отвечает: тот же исполнитель и «Re: <тема вопроса>»."""
+        subj = re.sub(r"^((re|fwd?|ответ)\s*:\s*)+", "", (e.subject or "").strip(), flags=re.I).strip().lower()
+        frm = (e.from_email or "").lower()
+        for a in self.j.actions():
+            pl = a["payload"] or {}
+            if a["kind"] == "mail_sent" and pl.get("kind") in ("выяснение", "напоминание") \
+                    and (pl.get("to") or "").lower() == frm and (pl.get("subject") or "").lower() == subj:
+                return pl["subject"]
+        return ""
+
+    def _remember_answer(self, e, asked: str, when: datetime, eid: int) -> None:
+        """Суть ответа исполнителя — в память сразу, без модели: следующая встреча её учтёт."""
+        if self.memory is None:
+            return
+        from .memory import Fact
+        m = re.search(r"«(.+)»", asked)
+        task = m.group(1) if m else asked
+        key = re.search(r"«([^»]+)»", task)
+        body = " ".join((e.body or "").split())
+        what = re.split(r"(?<=[.!?])\s", body, maxsplit=1)[0][:200] if body else "ответил без текста"
+        quote = " ".join(body.split()[:20])
+        facts = [Fact(topic=key.group(1) if key else task, kind="задача", what=f"{task}: {body[:240]}", who=e.from_name,
+                      when=when, source=e.id, quote=quote or what)]
+        n = self.memory.add(facts)
+        if n:
+            self._log("memory_saved", path="now", event_id=eid, summary=f"ответ {e.from_name} по «{task}»",
+                      payload={"source": e.id, "facts": n, "task": task})
 
     # ---------------- память ----------------
     def remember(self, text: str, *, source: str, who: str, when: datetime, title: str = "", event_id=None) -> int:

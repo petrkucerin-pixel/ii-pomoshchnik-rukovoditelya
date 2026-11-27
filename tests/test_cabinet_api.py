@@ -410,3 +410,46 @@ def test_owner_answer_shows_on_task_page(env):
     p = c.get("/api/tasks/t001").json()
     assert p["answer"] and "статус ошибочный" in p["answer"]["body"]
     assert "Ответ пришёл" in p["next"]["text"]
+
+
+# ---------------- сквозная цепочка: спросил → ответ → память → следующая встреча ----------------
+class ReplyBox:
+    def __init__(self, letters):
+        self.letters = letters
+
+    def fetch_new(self):
+        out, self.letters = self.letters, []
+        return out
+
+    def send(self, *a, **k):
+        return "<x>"
+
+
+def test_owner_reply_goes_to_memory_not_to_leader_and_reaches_next_meeting(env):
+    from types import SimpleNamespace
+    from datetime import date
+    from pomoshnik import cabinet
+    c, a, _ = env
+    cabinet.chase_overdue(a)
+    asked = next(x for x in letters(c, direction="out") if "Подготовить КП" in x["subject"])
+    queue = len(a.decisions)
+    reply = SimpleNamespace(id="reply-kp", from_name="Ольга Смирнова", from_email="p02@company.example",
+                            to="p01@company.example", subject="Re: " + asked["subject"],
+                            body="Статус в списке ошибочный, срок не сдвигался. КП для «ТехноСтрой» отправлю клиенту 20.12.",
+                            received=a.clock.now())
+    a.mail = ReplyBox([reply])           # модель-заглушка не узнаёт тему — код должен узнать ответ сам
+    a.process_inbox()
+    assert len(a.decisions) == queue                                         # к руководителю не попал
+    route = [x for x in a.j.actions() if x["kind"].startswith("mail_") and x["kind"] != "mail_sent"][-1]
+    assert route["kind"] == "mail_в_сводку" and "ответ" in route["payload"]["reason"]
+    mem = c.get("/api/memory?q=ТехноСтрой").json()
+    assert any("20.12" in h["what"] or "20.12" in h["quote"] for t in mem["topics"] for h in t["history"])
+    page = c.get("/api/tasks/t001").json()
+    assert page["answer"] and "Ответ пришёл" in page["next"]["text"]
+    day = date.fromisoformat(c.get("/api/today").json()["day"])
+    meet = next(m for m in a.meetings if m.start.date() > day and "Ольга Смирнова" in m.attendees)
+    card = c.get(f"/api/meetings/{meet.uid}").json()
+    assert any("Подготовить КП" in q and "20.12" in q for q in card["history_questions"])   # аватар спросит по ответу
+    late = next(m for m in a.meetings if m.start.date() > day and "Алексей Новиков" in m.attendees)
+    hq = c.get(f"/api/meetings/{late.uid}").json()["history_questions"]
+    assert any("Обновить прогноз" in q and "ответа нет" in q for q in hq)                  # не ответил — спросит
