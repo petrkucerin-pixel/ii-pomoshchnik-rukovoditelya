@@ -216,7 +216,7 @@ def _drop_service_tasks(tasks: list) -> list:
     for old in keep:
         t = tasks[old - 1]
         if isinstance(t, dict) and isinstance(t.get("after"), list):
-            t = {**t, "after": [new_n[n] for n in t["after"] if n in new_n]}
+            t = {**t, "after": [new_n[n] for n in t["after"] if isinstance(n, int) and n in new_n]}
         out.append(t)
     return out
 
