@@ -28,16 +28,19 @@ class LiveAvatarError(RuntimeError):
 
 
 def build_context_prompt(*, leader: str, title: str, questions: list[str], open_tasks: list[str], style: str,
-                         history: str = "", history_questions: list[str] | None = None) -> str:
+                         history: str = "", history_questions: list[str] | None = None,
+                         participants: list[str] | None = None) -> str:
     q = "\n".join(f"{i}. {x}" for i, x in enumerate(questions, 1)) or "Прошлого протокола нет — начни с повестки."
     t = "\n".join(f"- {x}" for x in open_tasks[:15]) or "- открытых задач нет"
     hq = "\n".join(f"- {x}" for x in (history_questions or [])) or "- открытых вопросов нет"
+    who = ", ".join(participants or []) or "состав встречи неизвестен"
     return f"""Ты — ИИ-помощник руководителя {leader}. Ты участвуешь во встрече вместо него и всегда честно представляешься ИИ-помощником.
 Говори по-русски, коротко: одна-две фразы за раз. Стиль руководителя: {style or 'по делу, с конкретным следующим шагом и сроком'}.
 
 Встреча: {title}.
 Твоя задача на встрече:
 1. Поздоровайся и представься: «Я ИИ-помощник {leader}, веду встречу вместо него, протокол пришлю ему на утверждение».
+   Попроси участников называть себя перед ответом — ты не видишь, кто говорит.
 2. Пройди по вопросам из прошлого протокола по очереди. Выслушай ответ, уточни срок и ответственного, если их не назвали.
    Затем задай открытые вопросы из истории: статусы без движения, расхождения в сроках и цифрах.
    Если участник поднимает тему, загляни в историю ниже: напомни, что и когда сообщали раньше, и спроси, что изменилось.
@@ -45,6 +48,13 @@ def build_context_prompt(*, leader: str, title: str, questions: list[str], open_
 3. Фиксируй новые договорённости: кто, что, к какому сроку. Переспроси, если срок или ответственный не ясны.
 4. Не принимай решений про деньги, бюджеты, кадры, обязательства клиентам — скажи, что вынесешь их руководителю.
 5. В конце коротко повтори договорённости и скажи, что протокол уйдёт на утверждение.
+
+Ты не видишь, кто говорит: до тебя доходит только общий звук встречи.
+- Не приписывай ответ человеку, которому задал вопрос: ответить мог любой.
+- Если человек не назвал себя, переспроси: «Кто сейчас ответил?» — и только потом записывай договорённость на него.
+- Обращайся по имени, только когда человек назвал себя или ты сам задал вопрос этому человеку.
+
+Участники встречи по приглашению: {who}.
 
 Вопросы по прошлому протоколу:
 {q}
@@ -60,19 +70,28 @@ def build_context_prompt(*, leader: str, title: str, questions: list[str], open_
 
 
 def opening_text(leader: str) -> str:
-    return f"Здравствуйте! Я ИИ-помощник {leader}. Веду встречу вместо него, протокол пришлю ему на утверждение. Начнём с прошлых договорённостей?"
+    return (f"Здравствуйте! Я ИИ-помощник {leader}. Веду встречу вместо него, протокол пришлю ему на утверждение. "
+            "Я не вижу, кто говорит, поэтому, пожалуйста, представляйтесь перед ответом. Начнём с прошлых договорённостей?")
 
 
-def transcript_to_text(entries: list[dict], avatar_name: str = "ИИ-помощник") -> str:
-    lines = []
+MERGE_GAP_S = 10      # обрывки одной реплики приходят с паузой в несколько секунд
+
+
+def transcript_to_text(entries: list[dict], avatar_name: str = "ИИ-помощник", *, merge: bool = False) -> str:
+    """Расшифровка сессии → текст для протокола. merge=True склеивает обрывки одной реплики одного говорящего."""
+    utter: list[list] = []          # [начало, кто, текст, последний момент]
     for e in sorted(entries, key=lambda x: x.get("relative_timestamp", 0)):
         text = (e.get("transcript") or "").strip()
         if not text:
             continue
         who = avatar_name if e.get("role") == "avatar" else "Участник"
         s = int(e.get("relative_timestamp", 0))
-        lines.append(f"{s // 3600:02d}:{s % 3600 // 60:02d}:{s % 60:02d}\n{who}: {text}")
-    return "\n".join(lines)
+        if merge and utter and utter[-1][1] == who and s - utter[-1][3] <= MERGE_GAP_S:
+            utter[-1][2] += " " + text
+            utter[-1][3] = s
+        else:
+            utter.append([s, who, text, s])
+    return "\n".join(f"{s // 3600:02d}:{s % 3600 // 60:02d}:{s % 60:02d}\n{who}: {text}" for s, who, text, _ in utter)
 
 
 class LiveAvatar:
@@ -114,6 +133,12 @@ class LiveAvatar:
         return self._req("POST", "/v2/embeddings", json={
             "avatar_id": avatar_id, "context_id": context_id, "voice_id": voice_id,
             "default_language": language, "max_session_duration": max_seconds})
+
+    def create_session_token(self, avatar_id: str, context_id: str, voice_id: str, *, language: str = "ru") -> dict:
+        """Сессия FULL для своей страницы (робот Телемоста): {session_id, session_token}."""
+        return self._req("POST", "/v1/sessions/token", json={
+            "mode": "FULL", "avatar_id": avatar_id,
+            "avatar_persona": {"voice_id": voice_id, "context_id": context_id, "language": language}})
 
     def sessions(self, *, embed_id: str | None = None, historic: bool = True) -> list[Session]:
         params = {"type": "historic" if historic else "active", "page_size": 20}

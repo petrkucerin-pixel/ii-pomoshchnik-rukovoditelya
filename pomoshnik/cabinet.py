@@ -149,14 +149,18 @@ def tasks(a: Assistant) -> dict:
     return {"tasks": [task_dict(t, today, src) for t, src in all_tasks(a)]}
 
 
-def meeting_short(m: Meeting, a: Assistant, plist: list[dict] | None = None) -> dict:
+def meeting_short(m: Meeting, a: Assistant, plist: list[dict] | None = None, links: dict | None = None) -> dict:
     p = _protocol_for(m, plist if plist is not None else _protocol_rows(a))
+    if links is None:
+        from .robot.manager import links_from_journal
+        links = links_from_journal(a.j)
     emails = {}
     if a.p.org:
         emails = {p.name: a.p.org.email_of(p) for p in a.p.org.people}
     return {"uid": m.uid, "start": m.start.isoformat(), "end": m.end.isoformat(), "title": m.title,
             "category": m.category, "attendees": [{"name": n, "email": emails.get(n, "")} for n in m.attendees],
-            "protocol_id": p["id"] if p else None, "protocol_status": p["status"] if p else None}
+            "protocol_id": p["id"] if p else None, "protocol_status": p["status"] if p else None,
+            "link": links.get(m.uid)}
 
 
 def _risks(a: Assistant, today: date, days: int = 7) -> list[str]:

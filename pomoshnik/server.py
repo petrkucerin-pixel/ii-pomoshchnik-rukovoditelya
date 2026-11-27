@@ -33,6 +33,7 @@ from .metrics import compute_metrics
 from .profile import load_profile
 from .memory import Memory, collapse, period, topics
 from .protocol import ProtocolStore, questions_from_previous
+from .robot.manager import RobotManager, links_from_journal, set_link
 from .studio import Autopilot, prepare_avatar
 from .templates import TemplateError, discuss as discuss_template, to_dict as template_dict
 
@@ -151,7 +152,9 @@ class Stand:
         self.lock = threading.RLock()        # бот и кабинет работают с одним помощником
         self.assistant: Assistant = self._new_assistant()
         self.status = {"bot": "не запущен", "last_poll": None, "error": "", "autopilot": "не запущен"}
-        self.autopilot = Autopilot(lambda: self.assistant, _avatar_client,
+        self.robot = RobotManager(lambda: self.assistant, _avatar_client, self.lock,
+                                  avatar_id=os.environ.get("LIVEAVATAR_AVATAR_ID", ""), shots_dir=RUNTIME)
+        self.autopilot = Autopilot(lambda: self.assistant, _avatar_client, robot=self.robot,
                                    avatar_id=os.environ.get("LIVEAVATAR_AVATAR_ID", ""),
                                    base_url=os.environ.get("STAND_URL", "https://194-87-110-81.sslip.io"),
                                    categories={c.strip() for c in os.environ.get("AVATAR_CATEGORIES", "операционная").split(",")
@@ -353,6 +356,49 @@ def avatar_finish():
     with stand.lock:
         stand.assistant.new_meeting(text, state["title"], end, meeting_uid=state.get("meeting_uid"))
     return RedirectResponse("/#meetings", status_code=303)
+
+
+# ---------------- робот Телемоста (TASK_11) ----------------
+class LinkIn(BaseModel):
+    link: str
+
+
+class RobotIn(BaseModel):
+    link: str
+    title: str = "Встреча с ИИ-помощником"
+    uid: str | None = None
+    minutes: int = 60
+
+
+@app.put("/api/meetings/{uid}/link")
+def api_meeting_link(uid: str, body: LinkIn):
+    try:
+        set_link(stand.journal, uid, body.link)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from None
+    return {"ok": True}
+
+
+@app.get("/api/robot")
+def api_robot():
+    return stand.robot.status()
+
+
+@app.post("/api/robot/start")
+def api_robot_start(body: RobotIn):
+    if not stand.robot.avatar_id or not _avatar_client():
+        raise HTTPException(503, "LiveAvatar не настроен")
+    try:
+        return stand.robot.start(link=body.link, title=body.title, uid=body.uid, minutes=max(5, min(body.minutes, 180)))
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from None
+    except RuntimeError as e:
+        raise HTTPException(409, str(e)) from None
+
+
+@app.post("/api/robot/stop")
+def api_robot_stop():
+    return {"ok": stand.robot.stop()}
 
 
 # ---------------- студия и экран аватара (TASK_09) ----------------

@@ -127,3 +127,18 @@ def test_reject(store):
     assert s.reject(pid)
     assert s.get(pid)["status"] == "отклонён"
     assert not s.approve(pid)
+
+
+def test_leader_alias_and_spoken_date_in_tasks():
+    from datetime import datetime
+    from pomoshnik.org import Org
+    from pomoshnik.protocol import _from_json
+    from yadro.clock import TZ_EKB
+    org = Org.load(Path(__file__).resolve().parent.parent / "data" / "task" / "org_structure.csv")
+    tr = "Участник: Анна отправит отчёт 12-го декабря. ИИ-помощник: вынесу вопрос по договору руководителю."
+    p = _from_json({"tasks": [
+        {"owner": "Анна", "what": "Отчёт по e-com", "due_text": "12-го декабря", "quote": "Анна отправит отчёт 12-го декабря"},
+        {"owner": "Руководитель", "what": "Решить срок договора", "due_text": "", "quote": "вынесу вопрос по договору руководителю"}]},
+        tr, title="Планёрка", meeting_end=datetime(2026, 11, 27, 9, 0, tzinfo=TZ_EKB), org=org)
+    assert p.tasks[0].due.date().isoformat() == "2026-12-12" and not p.tasks[0].default_due
+    assert p.tasks[1].owner == "Иван Петров" and "уточнить исполнителя" not in p.tasks[1].flags

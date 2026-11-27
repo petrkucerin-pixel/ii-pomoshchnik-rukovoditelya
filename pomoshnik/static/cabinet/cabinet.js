@@ -547,6 +547,36 @@ function transcriptForm(onCreated) {
   }};
 }
 
+// Робот Телемоста (TASK_11): ссылка на комнату у встречи и запуск аватара во встречу.
+function telemostBlock(m) {
+  const link = el("input");
+  link.type = "url";
+  link.placeholder = "Ссылка вида telemost.yandex.ru/j/…";
+  link.value = m.link || "";
+  const error = feedback(), status = hint("");
+  const box = el("div", "stack telemost", el("h3", "", "Телемост"), field("Ссылка на комнату", link), error);
+  async function showStatus() {
+    const r = await api("/api/robot");
+    status.textContent = r.state === "idle" ? "Робот свободен. В начале встречи он зайдёт сам, если ссылка сохранена." :
+      (r.state === "running" ? "Робот на встрече «" + r.meeting.title + "»: " + r.status :
+        "Последняя встреча робота «" + r.meeting.title + "»: " + (r.reason || r.status) +
+        (r.protocol_id ? " · протокол №" + r.protocol_id + " на утверждении" : ""));
+  }
+  const save = button("Сохранить ссылку", () => submitAction(box, error, async () => {
+    await api("/api/meetings/" + encodeURIComponent(m.uid) + "/link", "PUT", {link: link.value.trim()});
+    announce("Ссылка сохранена: аватар зайдёт сам в начале встречи");
+  }));
+  const go = button("Аватар в Телемост сейчас", () => submitAction(box, error, async () => {
+    const minutes = Math.max(15, Math.round((Date.parse(m.end) - Date.parse(m.start)) / 60000) + 10);
+    await api("/api/robot/start", "POST", {link: link.value.trim(), title: m.title, uid: m.uid, minutes});
+    announce("Робот заходит в Телемост, через полминуты аватар будет во встрече");
+    showStatus();
+  }), "primary");
+  box.append(el("div", "actions", go, save), status);
+  showStatus().catch(() => {});
+  return box;
+}
+
 function meetingsPage(host) {
   const requested = requestedMeeting;
   requestedMeeting = null;
@@ -612,6 +642,7 @@ function meetingsPage(host) {
           meta(stamp(m.start) + "–" + time(m.end), badge(readable(m.category))),
           el("h3", "", "Участники"), bullets(m.attendees.map(a => a.name || a.email), "Участники не указаны."),
           el("div", "actions", avatar, button("Добавить расшифровку", () => transcript.link(m))),
+          telemostBlock(m),
           el("h3", "", "Протокол"), d.protocol ? protocolView(d.protocol, mutate) : hint("Протокола пока нет."),
           el("h3", "", "Вопросы по прошлому протоколу"), bullets(d.previous_questions, "Вопросов нет."),
           el("h3", "", "Вопросы из истории"), bullets(d.history_questions, "Вопросов нет."),

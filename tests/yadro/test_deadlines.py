@@ -189,3 +189,9 @@ def test_add_working_days():
 def test_default_deadline():
     assert default_deadline(TUE, 3) == at(27, 11)
     assert default_deadline(THU, 3) == at(1, 12)
+
+
+@pytest.mark.parametrize("text", ["12-го декабря", "до 12-го декабря", "12-е декабря", "к 12-ому декабря", "12 го декабря"])
+def test_spoken_ordinal_dates_from_speech_recognition(text):
+    now = datetime(2026, 11, 27, 8, 35, tzinfo=TZ_EKB)
+    assert parse_deadline(text, now).due.date() == date(2026, 12, 12)

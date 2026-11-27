@@ -85,3 +85,25 @@ def test_context_prompt_carries_history_and_history_questions():
 def test_context_prompt_without_history_says_so():
     p = build_context_prompt(leader="Ивана Петрова", title="Планёрка", questions=[], open_tasks=[], style="")
     assert "истории пока нет" in p.lower()
+
+
+def test_prompt_knows_it_cannot_see_who_speaks():
+    p = build_context_prompt(leader="Ивана Петрова", title="Планёрка", questions=[], open_tasks=[], style="",
+                             participants=["Ольга Смирнова", "Сергей Морозов"])
+    assert "не видишь, кто говорит" in p and "называть себя" in p
+    assert "Ольга Смирнова, Сергей Морозов" in p
+    assert "назови" in opening_text("Ивана Петрова").lower() or "представ" in opening_text("Ивана Петрова").lower()
+
+
+def test_transcript_fragments_are_merged_into_utterances():
+    t = transcript_to_text([
+        {"role": "avatar", "transcript": "Начнём?", "relative_timestamp": 7},
+        {"role": "user", "transcript": "Да,", "relative_timestamp": 11},
+        {"role": "user", "transcript": "договорённости и", "relative_timestamp": 15},
+        {"role": "user", "transcript": "плюс по облачному", "relative_timestamp": 19},
+        {"role": "avatar", "transcript": "Первый вопрос.", "relative_timestamp": 27},
+        {"role": "user", "transcript": "Нет.", "relative_timestamp": 60},
+    ], merge=True)
+    assert t.splitlines() == ["00:00:07", "ИИ-помощник: Начнём?", "00:00:11",
+                              "Участник: Да, договорённости и плюс по облачному", "00:00:27", "ИИ-помощник: Первый вопрос.",
+                              "00:01:00", "Участник: Нет."]

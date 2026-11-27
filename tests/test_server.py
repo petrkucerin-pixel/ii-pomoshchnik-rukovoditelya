@@ -152,3 +152,27 @@ def test_avatar_screen_shows_meeting(client, monkeypatch):
     page = client.get("/avatar/screen", params={"uid": "ev001@company.example"}).text
     assert "Планёрка направления" in page and "Вопросы из истории" in page and "Задачи участников" in page
     assert client.get("/avatar/screen", params={"uid": "nope"}).status_code == 404
+
+
+# ---------------- TASK_11: робот Телемоста через API ----------------
+def test_robot_api_link_start_status(client, monkeypatch):
+    from test_robot_manager import FakeLA, fake_runner
+    from pomoshnik.llm import StubLLM
+    monkeypatch.setenv("LIVEAVATAR_AVATAR_ID", "dff45d08")
+    la, run = FakeLA(), fake_runner()
+    monkeypatch.setattr(srv, "_avatar_client", lambda: la)
+    rm = srv.stand.robot
+    rm._la, rm.runner, rm.threaded, rm.wait_s, rm.avatar_id = (lambda: la), run, False, 0, "dff45d08"
+    srv.stand.assistant.llm = StubLLM(lambda s, u: {"topics": [], "decisions": [], "tasks": [], "open_questions": []}
+                                      if "секретарь" in s else {"facts": []})
+    uid = "ev001@company.example"
+    assert client.put(f"/api/meetings/{uid}/link", json={"link": "ftp://x"}).status_code == 422
+    assert client.put(f"/api/meetings/{uid}/link", json={"link": "https://telemost.yandex.ru/j/1"}).json() == {"ok": True}
+    assert client.get(f"/api/meetings/{uid}").json()["meeting"]["link"] == "https://telemost.yandex.ru/j/1"
+    assert client.get("/api/robot").json()["state"] == "idle"
+    r = client.post("/api/robot/start", json={"uid": uid, "title": "Планёрка", "link": "https://telemost.yandex.ru/j/1"})
+    assert r.status_code == 200 and run.calls[0]["link"] == "https://telemost.yandex.ru/j/1"
+    st = client.get("/api/robot").json()
+    assert st["state"] == "finished" and st["protocol_id"]
+    assert client.post("/api/robot/stop").json() == {"ok": False}
+    assert client.post("/api/robot/start", json={"title": "x"}).status_code == 422

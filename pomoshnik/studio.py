@@ -26,7 +26,8 @@ def leader_genitive(a: Assistant) -> str:
     return os.environ.get("LEADER_NAME_GENITIVE") or a.p.name
 
 
-def prepare_avatar(a: Assistant, la, avatar_id: str, title: str, uid: str | None, *, max_seconds: int = 1200) -> dict:
+def prepare_avatar(a: Assistant, la, avatar_id: str, title: str, uid: str | None, *, max_seconds: int = 1200,
+                   embed: bool = True) -> dict:
     """Контекст аватара для встречи: прошлый протокол, вопросы ревизора, вся история, задачи участников."""
     card = cabinet.meeting(a, uid) if uid else None
     history = brief(a.memory) if a.memory is not None else ""
@@ -40,15 +41,19 @@ def prepare_avatar(a: Assistant, la, avatar_id: str, title: str, uid: str | None
         today = a.today()
         tasks = [cabinet.task_dict(t, today, src) for t, src in cabinet.all_tasks(a) if t.status not in cabinet.DONE]
     task_lines = [f"{t['task']} — {t['owner']}, до {t['due'][8:10]}.{t['due'][5:7]}" for t in tasks]
+    participants = [x["name"] for x in card["meeting"]["attendees"]] if card else []
     gen = leader_genitive(a)
     ctx = la.create_context(f"{title} {a.today():%d.%m}",
                             build_context_prompt(leader=gen, title=title, questions=questions, open_tasks=task_lines,
-                                                 style=a.p.style, history=history, history_questions=history_questions),
+                                                 style=a.p.style, history=history, history_questions=history_questions,
+                                                 participants=participants),
                             opening_text(gen))
-    emb = la.create_embed(avatar_id, ctx, la.voice_id(), max_seconds=max_seconds)
-    return {"context_id": ctx, "embed_id": emb.get("embed_id") or emb.get("id"),
-            "url": emb.get("url") or emb.get("embed_url") or "", "questions": questions,
-            "history_questions": history_questions, "history_chars": len(history)}
+    out = {"context_id": ctx, "embed_id": None, "url": "", "questions": questions, "participants": participants,
+           "history_questions": history_questions, "history_chars": len(history)}
+    if embed:                       # окно для браузера; роботу Телемоста оно не нужно
+        emb = la.create_embed(avatar_id, ctx, la.voice_id(), max_seconds=max_seconds)
+        out |= {"embed_id": emb.get("embed_id") or emb.get("id"), "url": emb.get("url") or emb.get("embed_url") or ""}
+    return out
 
 
 def finish_session(a: Assistant, la, embed_id: str, title: str, uid: str | None):
@@ -56,7 +61,7 @@ def finish_session(a: Assistant, la, embed_id: str, title: str, uid: str | None)
     s = latest_finished(la.sessions(embed_id=embed_id))
     if not s:
         return None
-    text = transcript_to_text(la.transcript(s.id))
+    text = transcript_to_text(la.transcript(s.id), merge=True)
     if not text.strip():
         return 0
     return a.new_meeting(text, title, end_time(s, TZ_EKB), meeting_uid=uid)
@@ -64,7 +69,8 @@ def finish_session(a: Assistant, la, embed_id: str, title: str, uid: str | None)
 
 class Autopilot:
     def __init__(self, assistant, liveavatar, *, avatar_id: str, base_url: str, categories: set[str],
-                 lead_min: int = 1):
+                 lead_min: int = 1, robot=None):
+        self.robot = robot                                  # робот Телемоста; без него — окно для студии
         self._a, self._la = assistant, liveavatar          # функции: помощник и клиент LiveAvatar берутся при каждом шаге
         self.avatar_id, self.base_url = avatar_id, base_url.rstrip("/")
         self.categories, self.lead = set(categories), timedelta(minutes=lead_min)
@@ -105,8 +111,25 @@ class Autopilot:
                 a.j.log_action("avatar_auto_error", summary=f"{m.title}: {e}"[:200],
                                payload={"uid": m.uid, "day": a.today().isoformat(), "error": str(e)[:200]})
 
+    def _link(self, a: Assistant, uid: str) -> str | None:
+        if self.robot is None:
+            return None
+        from .robot.manager import links_from_journal
+        return links_from_journal(a.j).get(uid)
+
     def _prepare(self, a: Assistant, m) -> None:
         minutes = int((m.end - m.start).total_seconds() // 60) + TAIL_MIN
+        link = self._link(a, m.uid)
+        if link:                       # у встречи есть комната Телемоста — туда идёт робот с аватаром
+            if self.robot.running:
+                return                 # робот ещё на прошлой встрече — попробуем на следующем шаге
+            a.pult.send_text(f"Через минуту «{m.title}» ({m.start:%H:%M}). Аватар заходит в Телемост сам: {link}")
+            self.robot.start(link=link, title=m.title, uid=m.uid, minutes=minutes)
+            a.j.log_action("avatar_auto_ready", path="now", summary=f"{m.title} {m.start:%H:%M}: робот ушёл в Телемост",
+                           payload={"uid": m.uid, "day": a.today().isoformat(), "title": m.title, "robot": True,
+                                    "start": m.start.isoformat(), "end": m.end.isoformat(), "embed_id": None,
+                                    "url": link, "minutes_saved": 0})
+            return
         r = prepare_avatar(a, self._la(), self.avatar_id, m.title, m.uid, max_seconds=minutes * 60)
         a.j.log_action("avatar_auto_ready", path="now",
                        summary=f"{m.title} {m.start:%H:%M}: аватар готов, вопросов {len(r['questions'])} + "
@@ -118,6 +141,15 @@ class Autopilot:
                          f"Студия: {self.base_url}/studio\nЭкран аватара: {self.screen_url(m.uid)}")
 
     def _finish(self, a: Assistant, m, r: dict, now: datetime) -> None:
+        if r.get("robot"):             # протокол собирает робот — ждём его отчёт
+            if self.robot.running and self.robot.meta.get("uid") == m.uid:
+                return
+            rd = [x["payload"] for x in a.j.actions() if x["kind"] == "robot_done" and x["payload"].get("uid") == m.uid]
+            pid = rd[-1].get("protocol_id") if rd else None
+            a.j.log_action("avatar_auto_done", path="now", summary=f"{m.title}: {'protocol' if pid else 'no_session'}",
+                           payload={"uid": m.uid, "day": a.today().isoformat(),
+                                    "result": "protocol" if pid else "no_session", "protocol_id": pid})
+            return
         pid = finish_session(a, self._la(), r["embed_id"], m.title, m.uid)
         if pid is None and now < m.end + timedelta(minutes=GRACE_MIN):
             return                                          # сессия может закрыться позже — ждём
