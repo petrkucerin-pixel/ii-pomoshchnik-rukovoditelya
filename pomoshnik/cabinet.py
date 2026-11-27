@@ -266,7 +266,8 @@ def task_page(a: Assistant, task_id: str) -> dict | None:
     hist = task_history(a, task_id)
     asked = asked_tasks(a)
     answer = _answer(a, t, asked[task_id]) if task_id in asked else None
-    meet = next((m for m in a.meetings if m.start.date() >= today and t.owner in m.attendees), None)
+    now = datetime.combine(today, a.clock.now().timetz())       # прошедшие сегодня встречи не предлагаем
+    meet = next((m for m in a.meetings if m.start >= now and t.owner in m.attendees), None)
     where = f" на встрече «{meet.title}» {meet.start:%d.%m %H:%M}" if meet else " один на один"
     if t.status in DONE:
         text = "Задача закрыта, ничего делать не нужно."

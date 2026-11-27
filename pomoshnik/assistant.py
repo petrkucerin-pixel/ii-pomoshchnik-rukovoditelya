@@ -752,7 +752,7 @@ class Assistant:
         """Помощник сам выясняет у исполнителя, что с просроченной задачей. Руководителя не зовёт."""
         if not self._task_letter(owner, task, due, question, "выяснение"):
             return False
-        self._log("task_action", path="now", summary=f"Спросил {owner}, что с «{task}»",
+        self._log("task_action", path="now", summary=f"Спросил исполнителя ({owner}), что с «{task}»",
                   payload={"task_id": task_id, "action": "ask", "due": None, "minutes_saved": 5})
         return True
 
