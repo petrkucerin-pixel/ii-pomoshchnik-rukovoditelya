@@ -27,7 +27,7 @@ def leader_genitive(a: Assistant) -> str:
 
 
 def prepare_avatar(a: Assistant, la, avatar_id: str, title: str, uid: str | None, *, max_seconds: int = 1200,
-                   embed: bool = True) -> dict:
+                   embed: bool = True, participants: list[str] | None = None) -> dict:
     """Контекст аватара для встречи: прошлый протокол, вопросы ревизора, вся история, задачи участников."""
     card = cabinet.meeting(a, uid) if uid else None
     history = brief(a.memory) if a.memory is not None else ""
@@ -41,7 +41,8 @@ def prepare_avatar(a: Assistant, la, avatar_id: str, title: str, uid: str | None
         today = a.today()
         tasks = [cabinet.task_dict(t, today, src) for t, src in cabinet.all_tasks(a) if t.status not in cabinet.DONE]
     task_lines = [f"{t['task']} — {t['owner']}, до {t['due'][8:10]}.{t['due'][5:7]}" for t in tasks]
-    participants = [x["name"] for x in card["meeting"]["attendees"]] if card else []
+    if participants is None:       # по приглашению; робот передаёт фактический состав встречи из Телемоста
+        participants = [x["name"] for x in card["meeting"]["attendees"]] if card else []
     gen = leader_genitive(a)
     ctx = la.create_context(f"{title} {a.today():%d.%m}",
                             build_context_prompt(leader=gen, title=title, questions=questions, open_tasks=task_lines,

@@ -31,12 +31,12 @@ ALONE_AFTER_S = 120      # все ушли — робот выходит чер�
 NOBODY_S = 15 * 60       # никто не пришёл за 15 минут — робот выходит
 
 # опрос комнаты: состояние моста, расшифровка, имена на плитках и число участников с кнопки «Участники N»
-_POLL = """() => {
+_POLL = """(seen) => {
   const btn = [...document.querySelectorAll('button')].find(b => (b.innerText || '').includes('Участники'));
   const m = btn && btn.innerText.match(/(\\d+)/);
   const names = [...document.querySelectorAll('[class*="TextName_"]')].map(e => e.textContent.trim());
-  return {state: __bridge.state, log: __bridge.log, transcript: __bridge.transcript,
-          count: m ? Number(m[1]) : null, names};
+  return {state: __bridge.state, log: __bridge.log, transcript: __bridge.transcript, sessionAt: __bridge.sessionAt || 0,
+          signals: __bridge.signals.slice(seen), count: m ? Number(m[1]) : null, names};
 }"""
 
 
@@ -50,11 +50,31 @@ class RobotState:
     stop: bool = False
     started: float = 0.0
     shots: list[str] = field(default_factory=list)
+    people: dict = field(default_factory=dict)          # id участника Телемоста → подпись
+    vad: dict = field(default_factory=dict)             # кто говорит прямо сейчас
+    vad_events: list = field(default_factory=list)      # (мс, id, говорит?)
+    session_at: float = 0.0                             # мс: старт сессии аватара
+    signals_seen: int = 0
 
     def note(self, msg: str) -> None:
         line = f"{datetime.now():%H:%M:%S} {msg}"
         self.log.append(line)
         log.info(msg)
+
+    def take_signals(self, signals: list) -> None:
+        from .speakers import parse_signal
+        state = {"people": self.people, "vad": self.vad}
+        for t, raw in signals:
+            self.vad_events += parse_signal(raw, state, float(t))
+        self.signals_seen += len(signals)
+
+
+async def _read_room(room, st: RobotState) -> dict:
+    b = await room.evaluate(_POLL, st.signals_seen)
+    st.take_signals(b["signals"])
+    if b.get("sessionAt"):
+        st.session_at = float(b["sessionAt"])
+    return b
 
 
 def transcript_text(items: list[dict], started_ms: float) -> str:
@@ -151,11 +171,16 @@ async def run_meeting(link: str, *, name: str, token: str | None, until: float, 
             room = await join_telemost(page, link, name, st, shots_dir)
             if token:
                 st.status = "запуск аватара"
+                await asyncio.sleep(2)                 # Телемост успевает прислать список участников
+                await _read_room(room, st)
+                if callable(token):                    # сессия аватара — уже с составом встречи
+                    present = [n for n in st.people.values() if n != name]
+                    token = await asyncio.to_thread(token, present)
                 await room.evaluate("t => { window.__bridge.start(t); }", token)
             joined_at, alone_since, others_seen = time.time(), None, False
             while not st.stop and time.time() < until:
                 try:
-                    b = await room.evaluate(_POLL)
+                    b = await _read_room(room, st)
                 except Exception:              # комнаты больше нет: встречу завершили
                     st.end_reason = "встреча завершена"
                     st.note("комната Телемоста закрыта — встреча завершена")
@@ -164,7 +189,7 @@ async def run_meeting(link: str, *, name: str, token: str | None, until: float, 
                     st.note("мост: " + line[9:])
                 seen_log = len(b["log"])
                 st.transcript = b["transcript"]          # копим по ходу: при обрыве расшифровка не теряется
-                st.participants |= {n for n in b["names"] if n and n != name}
+                st.participants |= {n for n in [*b["names"], *st.people.values()] if n and n != name}
                 st.status = {"live": "аватар во встрече", "error": "ошибка аватара", "ended": "аватар отключился"}.get(
                     b["state"], st.status)
                 if b["state"] == "ended":

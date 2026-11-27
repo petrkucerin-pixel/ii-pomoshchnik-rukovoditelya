@@ -52,12 +52,17 @@ class FakeLA:
         return self.entries
 
 
-def fake_runner(bridge_lines=(), participants=("Пит",), reason="встреча завершена"):
+def fake_runner(bridge_lines=(), participants=("Пит",), reason="встреча завершена", people=None, vad=None):
     calls = []
 
     async def run(link, *, name, token, until, st, shots_dir=None, headless=True):
+        st.people.update(people or {})
+        if callable(token):                      # сессия аватара создаётся после входа, с составом встречи
+            token = token([n for n in st.people.values() if n != name])
         calls.append({"link": link, "name": name, "token": token, "until": until})
         st.started = 1000.0
+        st.session_at = 1000.0
+        st.vad_events = list(vad or [])
         st.transcript = [{"role": r, "text": t, "t": 1000.0 + i * 1000} for i, (r, t) in enumerate(bridge_lines)]
         st.participants |= set(participants)
         st.end_reason = reason
@@ -175,3 +180,24 @@ def test_only_avatar_spoke_means_no_protocol(env):
     rm = manager(a, la, fake_runner(participants=(), reason="остановлен"), tmp)
     rm.start(link=LINK, title="Планёрка направления", uid=UID)
     assert kinds(a, "robot_done")[0]["payload"]["protocol_id"] is None and a.protocols.ids() == []
+
+
+
+def test_speakers_labeled_and_alias_learned_then_used_next_time(env):
+    a, clock, llm, tmp = env
+    la = FakeLA(entries=[
+        {"role": "avatar", "transcript": "Здравствуйте! Представьтесь, пожалуйста.", "relative_timestamp": 2},
+        {"role": "user", "transcript": "Это Иван Петров, всё по плану.", "relative_timestamp": 8},
+        {"role": "user", "transcript": "Анна отправит отчёт 12-го декабря.", "relative_timestamp": 20}])
+    people = {"p1": "Пит", "p2": "Оля С.", "pb": "ИИ-помощник Ивана Петрова"}
+    vad = [(1000 + 7000, "p1", True), (1000 + 11000, "p1", False), (1000 + 19000, "p2", True), (1000 + 23000, "p2", False)]
+    rm = manager(a, la, fake_runner(people=people, vad=vad, participants=("Пит", "Оля С.")), tmp)
+    rm.start(link=LINK, title="Планёрка направления", uid=UID)
+    assert "Пит (пока не знаю" in la.prompts[0] and "Оля С. (пока не знаю" in la.prompts[0]
+    sent = [u for s, u in llm.calls if "секретарь" in s][0]
+    assert "Иван Петров: Это Иван Петров, всё по плану." in sent and "Оля С.: Анна отправит" in sent  # не представилась
+    assert "Участники встречи в Телемосте: Иван Петров, Оля С." in sent
+    assert any(x["kind"] == "person_alias" and x["payload"] == {"display": "Пит", "person": "Иван Петров"}
+               for x in a.j.actions())
+    rm.start(link=LINK, title="Планёрка направления", uid=UID)               # вторая встреча: уже знает «Пит»
+    assert "Пит (это Иван Петров)" in la.prompts[1] and "Пит (пока не знаю" not in la.prompts[1]

@@ -46,6 +46,20 @@
     return canvas;
   }
 
+  // ---- кто говорит: Телемост присылает участников (upsertDescription) и голос (slotsConfig.vad) по WebSocket ----
+  bridge.signals = [];
+  const NativeWS = window.WebSocket;
+  window.WebSocket = function (...args) {
+    const ws = new NativeWS(...args);
+    ws.addEventListener("message", ev => {
+      if (typeof ev.data === "string" && (ev.data.includes("slotsConfig") || ev.data.includes("upsertDescription")))
+        bridge.signals.push([Date.now(), ev.data]);
+    });
+    return ws;
+  };
+  window.WebSocket.prototype = NativeWS.prototype;
+  Object.setPrototypeOf(window.WebSocket, NativeWS);
+
   // ---- звук встречи: перехватываем входящие дорожки Телемоста ----
   const NativePC = window.RTCPeerConnection;
   window.RTCPeerConnection = function (...args) {
@@ -114,6 +128,7 @@
       const say = role => e => { if (e && e.text) bridge.transcript.push({role, text: e.text, t: Date.now()}); };
       s.on(sdk.AgentEventsEnum.USER_TRANSCRIPTION, say("user"));
       s.on(sdk.AgentEventsEnum.AVATAR_TRANSCRIPTION, say("avatar"));
+      bridge.sessionAt = Date.now();      // от этого момента LiveAvatar считает время реплик
       await s.start();
       if (bridge.state === "starting") bridge.state = "connected";
       log("сессия аватара запущена");

@@ -16,7 +16,8 @@ from urllib.parse import urlparse
 from yadro.clock import TZ_EKB
 
 from ..avatar import LiveAvatarError, transcript_to_text
-from . import RobotState, run_meeting, transcript_text
+from . import RobotState, run_meeting
+from .speakers import aliases_from_journal, intervals, label_entries, learn_aliases, resolve_name
 
 log = logging.getLogger("pomoshnik.robot")
 
@@ -57,18 +58,26 @@ class RobotManager:
         link = check_link(link)
         if self.running:
             raise RuntimeError("робот уже на встрече")
-        la = self._la()
-        with self.lock:
-            a = self._a()
-            r = prepare_avatar(a, la, self.avatar_id, title, uid, embed=False)
-        tok = la.create_session_token(self.avatar_id, r["context_id"], la.voice_id())
+        a = self._a()
         self.st = RobotState()
-        self.meta = {"uid": uid, "title": title, "link": link, "session_id": tok["session_id"],
+        self.meta = {"uid": uid, "title": title, "link": link, "session_id": None,
                      "started_at": datetime.now(TZ_EKB).isoformat(timespec="seconds"), "protocol_id": None}
         self.running = True
         a.j.log_action("robot_started", path="now", summary=f"{title}: робот заходит в Телемост",
-                       payload={k: self.meta[k] for k in ("uid", "title", "link", "session_id")})
-        args = (link, tok["session_token"], time.time() + minutes * 60)
+                       payload={k: self.meta[k] for k in ("uid", "title", "link")})
+
+        def session_token(present: list[str]) -> str:
+            """Вызывает робот после входа: контекст аватара с фактическим составом встречи и известными связками."""
+            la = self._la()
+            with self.lock:
+                a = self._a()
+                r = prepare_avatar(a, la, self.avatar_id, title, uid, embed=False,
+                                   participants=self._who(a, present) or None)
+            tok = la.create_session_token(self.avatar_id, r["context_id"], la.voice_id())
+            self.meta["session_id"] = tok["session_id"]
+            return tok["session_token"]
+
+        args = (link, session_token, time.time() + minutes * 60)
         if self.threaded:
             threading.Thread(target=self._run, args=args, daemon=True).start()
         else:
@@ -96,27 +105,54 @@ class RobotManager:
         finally:
             self.running = False
 
-    def _transcript(self, st: RobotState) -> tuple[str, str]:
+    @staticmethod
+    def _who(a, present: list[str]) -> list[str]:
+        """Подписи в Телемосте → для аватара: кого он знает, кого надо попросить представиться."""
+        aliases = aliases_from_journal(a.j)
+        out = []
+        for n in present:
+            person = aliases.get(n) or resolve_name(n, a.p.org)
+            if person and person != n:
+                out.append(f"{n} (это {person})")
+            elif person:
+                out.append(n)
+            else:
+                out.append(f"{n} (пока не знаю, кто это — попроси представиться)")
+        return out
+
+    def _entries(self, st: RobotState) -> tuple[list[dict], str]:
         """Полная расшифровка LiveAvatar (подождав, пока сессия закроется), иначе — то, что успел записать мост."""
         la = self._la()
         for attempt in range(4):
-            try:
-                entries = la.transcript(self.meta["session_id"])
-            except LiveAvatarError as e:
-                st.note(f"расшифровка LiveAvatar недоступна: {e}")
-                entries = []
+            entries = []
+            if self.meta.get("session_id"):
+                try:
+                    entries = la.transcript(self.meta["session_id"])
+                except LiveAvatarError as e:
+                    st.note(f"расшифровка LiveAvatar недоступна: {e}")
             if entries:
-                return transcript_to_text(entries, merge=True), "liveavatar"
+                return entries, "liveavatar"
             if attempt < 3 and self.wait_s:
                 time.sleep(self.wait_s)
-        return transcript_text(st.transcript, st.started), "bridge"
+        t0 = st.session_at or st.started
+        return [{"role": x["role"], "transcript": x["text"], "relative_timestamp": (x["t"] - t0) / 1000}
+                for x in st.transcript], "bridge"
 
     def _finish(self, st: RobotState) -> None:
-        text, source = self._transcript(st)
+        entries, source = self._entries(st)
         a = self._a()
+        # кто говорил: лента vad из Телемоста; новые связки «подпись → человек» запоминаем
+        labeled = label_entries(entries, st.vad_events, st.session_at or st.started, st.people,
+                                robot_name=self.name(), aliases=aliases_from_journal(a.j))
+        if learn_aliases(a.j, labeled, a.p.org):
+            labeled = label_entries(entries, st.vad_events, st.session_at or st.started, st.people,
+                                    robot_name=self.name(), aliases=aliases_from_journal(a.j))
+        text = transcript_to_text(labeled, merge=True)
+        aliases = aliases_from_journal(a.j)
+        st.participants = {aliases.get(n) or resolve_name(n, a.p.org) or n for n in st.participants}
         pid = None
-        if "Участник:" in text:            # говорил только аватар — встречи не было, протокол не нужен
-            people =", ".join(sorted(st.participants)) or "не определены"
+        if any(e.get("role") != "avatar" for e in labeled):   # говорил только аватар — встречи не было
+            people = ", ".join(sorted(st.participants)) or "не определены"
             body = f"Участники встречи в Телемосте: {people}\n\n{text}"
             with self.lock:
                 pid = a.new_meeting(body, self.meta["title"], datetime.now(TZ_EKB), meeting_uid=self.meta["uid"])
@@ -135,4 +171,11 @@ class RobotManager:
         return {"state": "running" if self.running else "finished", "status": st.status, "reason": st.end_reason,
                 "meeting": {k: self.meta.get(k) for k in ("uid", "title", "link", "started_at")},
                 "protocol_id": self.meta.get("protocol_id"), "participants": sorted(st.participants),
-                "replies": len(st.transcript), "log": st.log[-15:]}
+                "voices": self._voices(st), "replies": len(st.transcript), "log": st.log[-15:]}
+
+    @staticmethod
+    def _voices(st: RobotState) -> dict[str, float]:
+        """Кто сколько секунд говорил — по ленте vad из Телемоста."""
+        end = max([t for t, _, _ in st.vad_events], default=0.0)
+        return {st.people.get(pid, pid): round(sum(b - a for a, b in iv) / 1000, 1)
+                for pid, iv in intervals(st.vad_events, end).items()}

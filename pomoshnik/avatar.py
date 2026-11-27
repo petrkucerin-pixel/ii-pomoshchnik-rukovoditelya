@@ -84,7 +84,7 @@ def transcript_to_text(entries: list[dict], avatar_name: str = "ИИ-помощ�
         text = (e.get("transcript") or "").strip()
         if not text:
             continue
-        who = avatar_name if e.get("role") == "avatar" else "Участник"
+        who = avatar_name if e.get("role") == "avatar" else (e.get("speaker") or "Участник")
         s = int(e.get("relative_timestamp", 0))
         if merge and utter and utter[-1][1] == who and s - utter[-1][3] <= MERGE_GAP_S:
             utter[-1][2] += " " + text
