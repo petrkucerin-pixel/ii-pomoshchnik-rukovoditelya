@@ -16,6 +16,20 @@ from yadro.quotes import check_quote
 
 from .org import Org
 
+# Служебные фразы аватара: из них модель делала задачу «Утвердить протокол» (живой прогон 27.11).
+_SERVICE = ("Здравствуйте! Я ИИ-помощник. Веду встречу вместо него, протокол пришлю ему на утверждение. "
+            "Я не вижу, кто говорит, поэтому, пожалуйста, представляйтесь перед ответом. "
+            "Протокол уйдёт на утверждение. Протокол пришлю на утверждение.")
+
+
+def _norm(x: str) -> str:
+    return " ".join("".join(c if c.isalnum() else " " for c in x.lower().replace("ё", "е")).split())
+
+
+def _service_quote(quote: str) -> bool:
+    q = _norm(quote or "")
+    return bool(q) and q in _norm(_SERVICE)
+
 SYSTEM = """Ты секретарь руководителя. По расшифровке встречи составь протокол.
 Верни JSON:
 {"topics": [{"title": "...", "points": ["..."]}],
@@ -193,6 +207,20 @@ def _rules_block(rules: list[str]) -> str:
     return "\n\nПравки руководителя к прошлым протоколам — учитывай их:\n" + "\n".join(f"- {r}" for r in rules[-10:])
 
 
+
+def _drop_service_tasks(tasks: list) -> list:
+    """Убирает задачи из служебных фраз аватара и перенумеровывает ссылки "after" на оставшиеся."""
+    keep = [i for i, t in enumerate(tasks, 1) if not (isinstance(t, dict) and _service_quote(t.get("quote", "")))]
+    new_n = {old: new for new, old in enumerate(keep, 1)}
+    out = []
+    for old in keep:
+        t = tasks[old - 1]
+        if isinstance(t, dict) and isinstance(t.get("after"), list):
+            t = {**t, "after": [new_n[n] for n in t["after"] if n in new_n]}
+        out.append(t)
+    return out
+
+
 def build_protocol(llm, transcript: str, *, title: str, meeting_end: datetime, org: Org | None,
                    rules: list[str] | None = None, previous: "Protocol | None" = None,
                    previous_id: int | None = None) -> Protocol:
@@ -205,6 +233,8 @@ def build_protocol(llm, transcript: str, *, title: str, meeting_end: datetime, o
     data = llm.complete_json(SYSTEM + _rules_block(rules or []), f"{user}Расшифровка:\n{transcript}")
     if not isinstance(data, dict):
         data = {}
+    if isinstance(data.get("tasks"), list):
+        data["tasks"] = _drop_service_tasks(data["tasks"])
     if snap:
         data["previous_tasks"], data["previous_id"] = snap, previous_id
     return _from_json(data, transcript, title=title, meeting_end=meeting_end, org=org)
