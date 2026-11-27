@@ -557,15 +557,12 @@ function transcriptForm(onCreated) {
 // Ссылка Телемоста: без токена — открыть Телемост и вставить ссылку; с TELEMOST_OAUTH_TOKEN — создать автоматически.
 let telemostConfig = null;
 function telemostLinkTool(input, error) {
-  const btn = button("Открыть Телемост", () => {}, "");
+  const btn = button("Создать комнату в Телемосте", () => {}, "");
   const tip = hint("");
   (telemostConfig ? Promise.resolve(telemostConfig) : api("/api/telemost").then(c => (telemostConfig = c))).then(cfg => {
-    if (cfg.auto) {
-      btn.textContent = "Создать ссылку Телемоста";
-      tip.textContent = "Ссылка создастся автоматически и уйдёт в приглашения.";
-    } else {
-      tip.textContent = "Откроется Телемост: нажмите «Создать видеовстречу», скопируйте ссылку и вставьте её в поле выше.";
-    }
+    tip.textContent = cfg.auto ? "Комната создастся автоматически." :
+      "Встреча в календаре уже есть — это только комната для созвона. В Телемосте нажмите «Создать видеовстречу», " +
+      "скопируйте ссылку и вставьте её в поле выше: она сохранится сама и уйдёт участникам.";
     btn.onclick = async () => {
       if (!cfg.auto) {
         window.open(cfg.create_url, "_blank", "noopener");
@@ -575,7 +572,7 @@ function telemostLinkTool(input, error) {
       btn.disabled = true;
       try {
         input.value = (await api("/api/telemost/conference", "POST")).link;
-        announce("Ссылка Телемоста создана");
+        input.dispatchEvent(new Event("change"));
       } catch (e) {
         error.textContent = e.message;
       } finally {
@@ -586,33 +583,63 @@ function telemostLinkTool(input, error) {
   return el("div", "telemost-tool", btn, tip);
 }
 
-// Робот Телемоста (TASK_11): ссылка на комнату у встречи и запуск аватара во встречу.
-function telemostBlock(m) {
+// Как проходит встреча: веду сам или мой ИИ-аватар; комната Телемоста; подключиться самому (TASK_11).
+function telemostBlock(m, refresh) {
+  const error = feedback(), status = hint(""), actions = el("div", "actions");
   const link = el("input");
   link.type = "url";
-  link.placeholder = "Ссылка вида telemost.yandex.ru/j/…";
+  link.placeholder = "Вставьте ссылку на комнату Телемоста";
   link.value = m.link || "";
-  const error = feedback(), status = hint("");
-  const box = el("div", "stack telemost", field("Ссылка на комнату", link), telemostLinkTool(link, error), error);
-  async function showStatus() {
-    const r = await api("/api/robot");
-    status.textContent = r.state === "idle" ? "Робот свободен. В начале встречи он зайдёт сам, если ссылка сохранена." :
-      (r.state === "running" ? "Робот на встрече «" + r.meeting.title + "»: " + r.status :
-        "Последняя встреча робота «" + r.meeting.title + "»: " + (r.reason || r.status) +
-        (r.protocol_id ? " · протокол №" + r.protocol_id + " на утверждении" : ""));
+  link.addEventListener("change", async () => {
+    const v = link.value.trim();
+    if (!v || v === m.link) return;
+    error.textContent = "";
+    try {
+      await api("/api/meetings/" + encodeURIComponent(m.uid) + "/link", "PUT", {link: v});
+      announce("Ссылка сохранена");
+      refresh();
+    } catch (e) { error.textContent = e.message; }
+  });
+  async function setLead(avatar) {
+    try {
+      await api("/api/meetings/" + encodeURIComponent(m.uid) + "/lead", "PUT", {avatar});
+      announce(avatar ? "Встречу ведёт ваш ИИ-аватар" : "Встречу ведёте вы");
+      refresh();
+    } catch (e) { error.textContent = e.message; }
   }
-  const save = button("Сохранить ссылку", () => submitAction(box, error, async () => {
-    await api("/api/meetings/" + encodeURIComponent(m.uid) + "/link", "PUT", {link: link.value.trim()});
-    announce("Ссылка сохранена: аватар зайдёт сам в начале встречи");
-  }));
-  const go = button("Аватар в Телемост сейчас", () => submitAction(box, error, async () => {
-    const minutes = Math.max(15, Math.round((Date.parse(m.end) - Date.parse(m.start)) / 60000) + 10);
-    await api("/api/robot/start", "POST", {link: link.value.trim(), title: m.title, uid: m.uid, minutes});
-    announce("Робот заходит в Телемост, через полминуты аватар будет во встрече");
-    showStatus();
-  }), "primary");
-  box.append(el("div", "actions", go, save), status);
-  showStatus().catch(() => {});
+  const lead = el("div", "segmented lead", toggle("Веду сам", !m.avatar, () => setLead(false)),
+    toggle("Ведёт мой ИИ-аватар", m.avatar, () => setLead(true)));
+  if (m.link) {
+    const join = el("a", "button-ghost join", "Подключиться к встрече", icon("arrow"));
+    join.href = m.link; join.target = "_blank"; join.rel = "noopener";
+    actions.append(join);
+  }
+  const box = el("div", "stack telemost", el("h3", "", "Кто ведёт встречу"), lead,
+    field("Комната в Телемосте", link), m.link ? null : telemostLinkTool(link, error), actions, status, error);
+  if (!m.avatar) {
+    status.textContent = m.link ? "Встречу ведёте вы. После неё добавьте расшифровку — протокол соберётся сам." :
+      "Встречу ведёте вы.";
+    return box;
+  }
+  if (!m.link) {
+    status.textContent = "Аватару нужна комната: создайте её в Телемосте и вставьте ссылку — он зайдёт сам.";
+    return box;
+  }
+  api("/api/robot").then(r => {
+    const here = r.state === "running" && r.meeting && r.meeting.uid === m.uid;
+    if (here) {
+      status.textContent = "Аватар сейчас на встрече: " + r.status + ". Подключитесь, чтобы послушать или перехватить разговор.";
+      actions.append(button("Остановить аватара", async () => { await api("/api/robot/stop", "POST"); announce("Аватар выходит из встречи"); refresh(); }, "quiet"));
+    } else {
+      status.textContent = "Аватар зайдёт в Телемост сам в " + time(m.avatar_at) + ". Вы можете подключиться: просто слушать или вступить в разговор — аватар слышит всех.";
+      actions.append(button("Запустить аватара сейчас", () => submitAction(box, error, async () => {
+        const minutes = Math.max(15, Math.round((Date.parse(m.end) - Date.parse(m.start)) / 60000) + 10);
+        await api("/api/robot/start", "POST", {link: m.link, title: m.title, uid: m.uid, minutes});
+        announce("Аватар заходит в Телемост, через полминуты он будет на встрече");
+        refresh();
+      }), "quiet"));
+    }
+  }).catch(() => {});
   return box;
 }
 
@@ -659,7 +686,7 @@ function newMeetingDialog(day, at) {
   form.append(el("h2", "", "Новая встреча"), field("Название", title),
     el("div", "row-3", field("День", date), field("Начало", start), field("Длительность", minutes)),
     field("Категория", category), el("div", "field", el("span", "", "Участники"), people), field("Ещё участники", emails),
-    field("Телемост", link), telemostLinkTool(link, error), el("label", "check", avatar, el("span", "", "Встречу ведёт ИИ-аватар — зайдёт в Телемост сам")),
+    field("Телемост", link), telemostLinkTool(link, error), el("label", "check", avatar, el("span", "", "Ведёт мой ИИ-аватар — зайдёт в Телемост сам; я могу подключиться и перехватить разговор")),
     error, el("div", "actions", save, cancel));
   dlg.append(form);
   dlg.addEventListener("close", () => dlg.remove());
@@ -720,15 +747,13 @@ function meetingView(host, uid) {
     const m = d.meeting;
     calendarDay = m.start.slice(0, 10);
     document.title = m.title + " · Кабинет руководителя";
-    const avatarWin = el("a", "button-ghost", "Аватар в окне браузера", icon("arrow"));
-    avatarWin.href = "/avatar?" + new URLSearchParams({title: m.title, uid: m.uid});
     const refresh = () => meetingView(host, uid);
     const mutate = async (id, suffix, payload) => { await mutateProtocol(id, suffix, payload); refresh(); };
     const head = card(m.title, "meetings",
       meta(dateLabel(m.start, {weekday: "long", day: "numeric", month: "long"}) + ", " + interval(m),
         badge(readable(m.category)), m.avatar ? badge("ведёт ИИ-аватар") : null),
       el("h3", "", "Участники"), bullets(m.attendees.map(a => a.name || a.email), "Участники не указаны."));
-    const telemost = card("Телемост и аватар", "focus", telemostBlock(m), el("div", "actions", avatarWin));
+    const telemost = card("Как проходит встреча", "focus", telemostBlock(m, refresh));
     const protocol = card("Протокол", "file", d.protocol ? protocolView(d.protocol, mutate) : hint("Протокола пока нет."),
       fold("Добавить расшифровку вручную", transcript.form));
     transcript.link(m);

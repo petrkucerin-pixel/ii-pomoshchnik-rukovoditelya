@@ -284,3 +284,27 @@ def test_people_for_meeting_form(env):
     people = c.get("/api/people").json()["people"]
     assert {"name": "Ольга Смирнова", "position": "Директор по продажам SMB", "email": "p02@company.example"} in people
     assert all(p["name"] != "Иван Петров" for p in people)                 # руководитель приглашает, а не приглашается
+
+
+# ---------------- кто ведёт встречу: я или мой ИИ-аватар ----------------
+def test_lead_choice_overrides_category_and_drives_autopilot(env):
+    c, a, _ = env
+    uid = "ev001@company.example"                                   # операционная — по умолчанию ведёт аватар
+    assert c.get(f"/api/meetings/{uid}").json()["meeting"]["avatar"] is True
+    assert c.put(f"/api/meetings/{uid}/lead", json={"avatar": False}).json() == {"ok": True}
+    assert c.get(f"/api/meetings/{uid}").json()["meeting"]["avatar"] is False
+    assert uid not in [m.uid for m in srv.stand.autopilot._meetings_all(a)]
+    client_meeting = next(m for m in a.meetings if m.category == "клиент")
+    c.put(f"/api/meetings/{client_meeting.uid}/lead", json={"avatar": True})
+    assert client_meeting.uid in [m.uid for m in srv.stand.autopilot._meetings_all(a)]
+    srv.stand.restart_assistant()                                    # выбор хранится в журнале
+    assert c.get(f"/api/meetings/{uid}").json()["meeting"]["avatar"] is False
+    assert c.put("/api/meetings/nope/lead", json={"avatar": True}).status_code == 404
+
+
+def test_link_saved_by_put_shows_in_card(env):
+    c, _, _ = env
+    uid = "ev001@company.example"
+    c.put(f"/api/meetings/{uid}/link", json={"link": "https://telemost.yandex.ru/j/9"})
+    m = c.get(f"/api/meetings/{uid}").json()["meeting"]
+    assert m["link"] == "https://telemost.yandex.ru/j/9" and "avatar_at" in m

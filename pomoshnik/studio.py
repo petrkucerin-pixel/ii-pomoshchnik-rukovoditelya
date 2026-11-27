@@ -82,7 +82,13 @@ class Autopilot:
 
     def _meetings(self, a: Assistant):
         day = a.today()
-        return [m for m in a.meetings if m.start.date() == day and (m.category in self.categories or m.avatar)]
+        return [m for m in self._meetings_all(a) if m.start.date() == day]
+
+    def _meetings_all(self, a: Assistant):
+        """Встречи, которые ведёт ИИ-аватар: выбор руководителя в карточке, иначе категория или галочка при создании."""
+        from .lead import avatar_leads, lead_overrides
+        ov = lead_overrides(a.j)
+        return [m for m in a.meetings if avatar_leads(m, ov, self.categories)]
 
     def _marks(self, a: Assistant) -> tuple[dict, dict]:
         day = a.today().isoformat()

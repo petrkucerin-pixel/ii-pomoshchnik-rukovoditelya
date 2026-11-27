@@ -355,3 +355,7 @@ select { width: 100%; min-height: 44px; padding: 9px 12px; border-radius: var(--
   background: rgba(255, 255, 255, .78); color: var(--text); font: inherit; }
 .telemost-tool { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: -4px; }
 .telemost-tool .muted { flex: 1 1 220px; margin: 0; }
+.segmented.lead { width: fit-content; }
+.telemost h3 { margin-top: 0; }
+.join { background: var(--ink); color: #fff; border-color: var(--ink); }
+.join:hover { background: #0e3366; }

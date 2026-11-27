@@ -456,6 +456,20 @@ def api_meeting_link(uid: str, body: LinkIn):
     return {"ok": True}
 
 
+class LeadIn(BaseModel):
+    avatar: bool
+
+
+@app.put("/api/meetings/{uid}/lead")
+def api_meeting_lead(uid: str, body: LeadIn):
+    """Кто ведёт встречу: руководитель сам или его ИИ-аватар (тогда робот зайдёт в Телемост сам)."""
+    from .lead import set_lead
+    if uid not in {m.uid for m in stand.assistant.meetings}:
+        raise HTTPException(404, "нет такой встречи")
+    set_lead(stand.journal, uid, body.avatar)
+    return {"ok": True}
+
+
 @app.get("/api/robot")
 def api_robot():
     return stand.robot.status()
