@@ -394,3 +394,8 @@ select { width: 100%; min-height: 44px; padding: 9px 12px; border-radius: var(--
 .task-move input { width: auto; }
 .task-why { grid-column: 1; font-size: .82rem; }
 .task-why-main { margin: 8px 0 0; color: var(--coral-ink); overflow-wrap: anywhere; }
+.status-chip { display: inline-block; margin-top: 2px; padding: 1px 8px; border-radius: 999px; font-size: .76rem; font-weight: 600; white-space: normal; }
+.status-you { background: rgba(240, 138, 115, .2); color: var(--coral-ink); }
+.status-wait { background: rgba(240, 180, 90, .2); color: #8a5a12; }
+.status-done { background: rgba(70, 150, 110, .15); color: #23704b; }
+.status-info { background: rgba(120, 140, 160, .14); color: var(--muted); }

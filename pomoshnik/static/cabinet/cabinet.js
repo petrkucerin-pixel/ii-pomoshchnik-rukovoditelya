@@ -338,22 +338,70 @@ function todayPage(host, sub = "") {
   refresh();
 }
 
-function letterView(letter) {
+// Плашка статуса письма: you — ждёт вас, wait — ждёт вашего решения по другому вопросу, done — сделано, info — для сведения.
+const statusChip = st => st ? el("span", "status-chip status-" + st.kind, st.label) : null;
+
+function letterView(letter, withFrom = false) {
   const addr = (name, email) => [name, email].filter(Boolean).join(" · ");
-  return fold(el("span", "summary-body", el("strong", "", letter.subject), el("small", "", stamp(letter.at))),
+  const who = letter.direction === "in" ? letter.from_name : "→ " + (letter.to_name || letter.to_email);
+  return fold(el("span", "summary-body", el("strong", "", letter.subject),
+      el("small", "", (withFrom ? who + " · " : "") + stamp(letter.at)), statusChip(letter.status)),
     el("div", "letter", hint("От кого · " + addr(letter.from_name, letter.from_email)),
       hint("Кому · " + addr(letter.to_name, letter.to_email)), el("p", "verbatim", letter.body),
-      badge(readable(letter.category)), el("h4", "", "Действие помощника"),
-      el("p", "", readable(letter.action)), hint(letter.reason)));
+      letter.status ? null : badge(readable(letter.category)),
+      letter.reason ? hint("Почему так: " + letter.reason) : null));
 }
 
-function mailPage(host) {
+// Переписка: сначала — где нужна ваша реакция, потом что сделал помощник, потом что для сведения (Пит 27.11).
+function mailPage(host, view = "") {
+  if (!["you", "done", "info", "parties", "style"].includes(view)) view = "you";
+  const again = v => mailPage(host, v);
   load(host, async mount => {
-    const {groups, letters} = await api("/api/mail");
+    const [{groups, letters, counts}, today] = await Promise.all([api("/api/mail"), api("/api/today")]);
+    const inc = letters.filter(m => m.direction === "in").sort((a, b) => (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0));
+    const tabs = el("div", "tabs");
+    const body = el("div");
+    const views = [["you", "Нужен ваш ответ · " + counts.you], ["done", "Сделал помощник · " + counts.done],
+      ["info", "Для сведения · " + counts.info], ["parties", "По собеседникам"], ["style", "Как я пишу"]];
+    tabs.replaceChildren(...views.map(([key, name]) => toggle(name, key === view, () => again(key))));
+    mount.replaceChildren(tabs, body);
+    const list = (kinds, empty) => {           // копии одного письма с тем же итогом — одна строка «×N»
+      const seen = new Map();
+      for (const m of inc.filter(m => kinds.includes(m.status.kind))) {
+        const key = [m.from_email, m.subject, m.status.label].join("|");
+        if (seen.has(key)) seen.get(key).times += 1; else seen.set(key, {...m, times: 1});
+      }
+      return card("Письма", "mail", rows([...seen.values()], m => {
+        const v = letterView(m, true);
+        if (m.times > 1) v.querySelector(".summary-body").append(el("span", "decision-times", "×" + m.times));
+        return v;
+      }, empty));
+    };
+    if (view === "you") {
+      const waiting = inc.filter(m => m.status.kind === "wait");
+      body.replaceChildren(
+        card("Ждут только вас", "check",
+          hint("Одинаковые письма склеены в один вопрос. Ответ уйдёт отправителю сразу после кнопки."),
+          today.decisions.length ? el("div", "", today.decisions.map(d => decisionItem(d, () => again("you"))))
+            : hint("Все решения приняты — от вас ничего не нужно.")),
+        waiting.length ? card("Ждут вашего решения по другому вопросу", "list",
+          rows(waiting, m => letterView(m, true), "")) : null);
+      return;
+    }
+    if (view === "done") return body.replaceChildren(list(["done"], "Помощник пока ничего не делал сам."));
+    if (view === "info") return body.replaceChildren(list(["info"], "Писем для сведения нет."));
+    if (view === "style") return stylePage(body);
+    partiesView(body, groups, letters);
+  });
+}
+
+// Прежний вид: по собеседникам — контрагенты, отделы, рассылки, спам.
+function partiesView(host, groups, letters) {
+  {
     const titles = Object.fromEntries(groups.map(g => [g.key, g.title]));
     const tabs = el("div", "tabs");
     const body = el("div");
-    mount.replaceChildren(tabs, body);
+    host.replaceChildren(tabs, body);
     let group = "counterparty", direction = "in", party = null;
     function select(key) {
       group = key;
@@ -363,13 +411,9 @@ function mailPage(host) {
     function render() {
       const dept = ["team", "internal"].includes(group);
       const topTabs = [["counterparty", titles.counterparty || "Контрагенты"], ["departments", "Отделы"],
-        ["newsletter", titles.newsletter || "Рассылки"], ["spam", titles.spam || "Спам"], ["style", "Как я пишу"]];
+        ["newsletter", titles.newsletter || "Рассылки"], ["spam", titles.spam || "Спам"]];
       tabs.replaceChildren(...topTabs.map(([key, name]) =>
         toggle(name, key === group || (key === "departments" && dept), () => select(key === "departments" ? "team" : key))));
-      if (group === "style") {
-        stylePage(body);
-        return;
-      }
       const filters = el("div", "filters");
       if (dept) filters.append(el("div", "segmented", ["team", "internal"].map(key =>
         toggle(titles[key]?.split(":").pop().trim() || key, group === key, () => select(key)))));
@@ -405,7 +449,7 @@ function mailPage(host) {
       showThread(party ?? parties.keys().next().value, false);
     }
     render();
-  });
+  }
 }
 
 // Как пишет руководитель (TASK_14). Шаблонов он не составляет: помощник пишет письма в его стиле и учится

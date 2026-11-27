@@ -492,3 +492,22 @@ def test_reply_without_date_changes_nothing(env):
     _reply_to_ask(c, a, "Подготовить КП", "Ольга Смирнова", "p02@company.example", "Работаю, всё в порядке.")
     t = next(x for x in c.get("/api/tasks").json()["tasks"] if x["id"] == "t001")
     assert t["due"] == "2026-12-24" and c.get("/api/tasks/t001").json()["proposal"] is None
+
+
+# ---------------- переписка: сразу видно, где нужна реакция руководителя ----------------
+def test_every_incoming_letter_has_clear_status(env):
+    c, a, _ = env
+    d = c.get("/api/mail").json()
+    inc = [x for x in d["letters"] if x["direction"] == "in"]
+    assert all(x["status"]["kind"] in ("you", "done", "wait", "info") and x["status"]["label"] for x in inc)
+    you = [x for x in inc if x["status"]["kind"] == "you"]
+    assert len(you) == len(a.decisions) and d["counts"]["you"] == len(a.groups())      # вопросы, а не копии
+    assert not any("_" in x["status"]["label"] for x in inc)                            # без служебных слов
+    by = {x["id"]: x["status"] for x in inc}
+    assert by["m002"]["kind"] == "done" and by["m002"]["label"].startswith("Передал")   # КП → Ольге
+    assert any(s["kind"] == "info" for s in by.values())                                # рассылки, спам
+    first = c.get("/api/today").json()["decisions"][0]
+    c.post(f"/api/decisions/{first['event_id']}", json={"verdict": "no"})
+    st = {x["id"]: x["status"] for x in c.get("/api/mail").json()["letters"] if x["direction"] == "in"}
+    decided = [s for s in st.values() if s["label"].startswith("Вы отказали")]
+    assert decided and all(s["kind"] == "done" for s in decided)
