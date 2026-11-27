@@ -90,7 +90,7 @@ def test_context_prompt_without_history_says_so():
 def test_prompt_knows_it_cannot_see_who_speaks():
     p = build_context_prompt(leader="Ивана Петрова", title="Планёрка", questions=[], open_tasks=[], style="",
                              participants=["Ольга Смирнова", "Сергей Морозов"])
-    assert "не видишь, кто говорит" in p and "называть себя" in p
+    assert "не видишь, кто говорит" in p and "назовёт себя" in p
     assert "Ольга Смирнова, Сергей Морозов" in p
     assert "назови" in opening_text("Ивана Петрова").lower() or "представ" in opening_text("Ивана Петрова").lower()
 
@@ -118,3 +118,11 @@ def test_single_participant_means_no_who_answered_questions():
     many = build_context_prompt(leader="Ивана Петрова", title="Планёрка", questions=[], open_tasks=[], style="",
                                 participants=["Пит", "Оля С."])
     assert "один человек" not in many and "не больше одного раза подряд" in many
+
+
+def test_avatar_moderates_gives_floor_by_name_and_asks_to_speak_in_turn():
+    """Пит 27.11: говорят сразу 3–4 человека — аватар просит говорить по очереди и сам назначает, кто первый."""
+    p = build_context_prompt(leader="Ивана Петрова", title="Планёрка", questions=["Ольга Смирнова — прогноз декабря"],
+                             open_tasks=[], style="", participants=["Ольга Смирнова", "Алексей Новиков"])
+    assert "вам слово" in p and "по очереди" in p and "первым спрашивай" in p.lower()
+    assert "по очереди" in opening_text("Ивана Петрова")

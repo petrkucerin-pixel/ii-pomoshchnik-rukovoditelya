@@ -40,6 +40,30 @@ _POLL = """(seen) => {
 }"""
 
 
+CROSSTALK_TEXT = "Коллеги, говорите, пожалуйста, по очереди — я не разберу, кто что сказал. Я дам слово каждому."
+CROSSTALK_S = 5          # сколько секунд двое и больше говорят вместе, прежде чем аватар попросит по очереди
+CROSSTALK_PAUSE_S = 60   # не чаще раза в минуту
+
+
+class Crosstalk:
+    """Говорят сразу несколько человек (по значкам голоса Телемоста) → пора попросить говорить по очереди.
+    Считаются только подписанные участники, кроме самого робота."""
+
+    def __init__(self, robot_name: str):
+        self.name, self.since, self.last = robot_name, None, None
+
+    def check(self, vad: dict, people: dict, now: float) -> bool:
+        talking = [pid for pid, on in vad.items() if on and people.get(pid) and people[pid] != self.name]
+        if len(talking) < 2:
+            self.since = None
+            return False
+        self.since = self.since if self.since is not None else now
+        if now - self.since < CROSSTALK_S or (self.last is not None and now - self.last < CROSSTALK_PAUSE_S):
+            return False
+        self.last, self.since = now, None
+        return True
+
+
 @dataclass
 class RobotState:
     status: str = "ожидание"
@@ -213,6 +237,7 @@ async def run_meeting(link: str, *, name: str, token: str | None, until: float, 
                 st.status = "запуск аватара"
                 await room.evaluate("t => { window.__bridge.start(t); }", token)
             joined_at, alone_since, others_seen = time.time(), None, False
+            crosstalk = Crosstalk(name)
             while not st.stop and time.time() < until:
                 try:
                     b = await _read_room(room, st)
@@ -227,6 +252,9 @@ async def run_meeting(link: str, *, name: str, token: str | None, until: float, 
                 st.participants |= {n for n in [*b["names"], *st.people.values()] if n and n != name}
                 st.status = {"live": "аватар во встрече", "error": "ошибка аватара", "ended": "аватар отключился"}.get(
                     b["state"], st.status)
+                if b["state"] == "live" and crosstalk.check(st.vad, st.people, time.time()):
+                    st.note("говорят одновременно — аватар просит по очереди")
+                    await room.evaluate("t => __bridge.say(t)", CROSSTALK_TEXT)
                 if b["state"] == "ended":
                     st.end_reason = "аватар отключился"
                     break

@@ -154,5 +154,7 @@
       log("ошибка запуска аватара: " + (e && e.message || e));
     }
   };
+  // готовая фраза голосом аватара, без модели: робот просит говорить по очереди
+  bridge.say = text => { try { if (bridge.session) bridge.session.repeat(text); } catch (e) { log("say: " + e); } };
   bridge.stop = async () => { try { if (bridge.session) await bridge.session.stop(); } catch (e) { log("stop: " + e); } };
 })();
