@@ -125,9 +125,22 @@ def mail(a: Assistant) -> dict:
 
 
 # ---------------- сегодня, задачи ----------------
+def why_late(t: TaskRow, today: date, source: str) -> str:
+    """Почему задача считается просроченной — одной строкой; пусто, если не просрочена."""
+    if t.status in DONE:
+        return ""
+    if t.due < today:
+        return f"срок {t.due:%d.%m} прошёл {(today - t.due).days} дн. назад, отметки о выполнении нет"
+    if t.status == "просрочена":
+        where = "в файле задач заказчика" if source == "tasks.csv" else f"в {source}"
+        return f"статус «просрочена» стоит {where}, хотя срок {t.due:%d.%m} ещё не наступил — уточните у исполнителя"
+    return ""
+
+
 def task_dict(t: TaskRow, today: date, source: str = "tasks.csv") -> dict:
     return {"id": t.id, "task": t.task, "owner": t.owner, "due": t.due.isoformat(), "status": t.status,
-            "overdue": t.status not in DONE and (t.status == "просрочена" or t.due < today), "source": source}
+            "overdue": t.status not in DONE and (t.status == "просрочена" or t.due < today), "source": source,
+            "why": why_late(t, today, source)}
 
 
 TASK_ACTIONS = ("remind", "move", "done")

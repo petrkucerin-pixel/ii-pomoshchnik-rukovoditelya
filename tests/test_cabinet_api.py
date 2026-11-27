@@ -367,3 +367,13 @@ def test_task_actions_remind_move_done(env):
     assert next(x for x in c.get("/api/tasks").json()["tasks"] if x["id"] == "t001")["status"] == "выполнена"
     assert c.post("/api/tasks/t001/action", json={"action": "fly"}).status_code == 422
     assert c.post("/api/tasks/t001/action", json={"action": "move"}).status_code == 422      # без нового срока
+
+
+def test_every_overdue_task_says_why(env):
+    c, _, _ = env
+    d = c.get("/api/today").json()
+    assert d["overdue"] and all(t["why"] for t in d["overdue"])
+    by_id = {t["id"]: t for t in c.get("/api/tasks").json()["tasks"]}
+    assert "ещё не наступил" in by_id["t001"]["why"]                              # статус из данных, срок 24.12
+    assert "прошёл" in by_id["t005"]["why"]                                       # срок 01.12, сегодня 11.12
+    assert all(not t["why"] for t in by_id.values() if not t["overdue"])

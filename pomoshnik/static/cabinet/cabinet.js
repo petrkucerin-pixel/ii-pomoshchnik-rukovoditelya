@@ -184,8 +184,10 @@ function metricCards(cards) {
 
 function taskRow(t) {
   const b = button(el("span", "task-line", el("strong", "", t.task),
-    meta(t.owner, el("span", t.overdue ? "late" : "", "до " + dateLabel(t.due)), t.status), icon("arrow")),
-    () => { location.hash = "meetings/t/" + encodeURIComponent(t.id); }, "row-link");
+    meta(t.owner, el("span", t.overdue ? "late" : "", "до " + dateLabel(t.due)), t.status),
+    t.why ? el("small", "late task-why", t.why) : null, icon("arrow")),
+    () => { location.hash = (location.hash.slice(1).split("/")[0] || "today") + "/t/" + encodeURIComponent(t.id); },
+    "row-link");
   b.setAttribute("aria-label", "Задача: " + t.task);
   return b;
 }
@@ -213,9 +215,14 @@ function taskView(host, id) {
     }
     const letter = x => el("div", "row", meta(x.from, x.at ? stamp(x.at) : "", x.route), el("strong", "", x.subject));
     const fact = f => el("div", "row", meta(f.who, f.when, f.source), el("p", "", f.what), el("blockquote", "", f.quote));
-    mount.replaceChildren(backLink("← Задачи"),
+    const back = button("← Назад", () => {
+      const head = location.hash.slice(1).split("/")[0] || "today";
+      if (history.length > 1) history.back(); else location.hash = head;
+    }, "quiet back-link");
+    mount.replaceChildren(back,
       card(t.task, "list",
         meta(t.owner, el("span", t.overdue ? "late" : "", "до " + dateLabel(t.due)), t.status, "откуда: " + t.source),
+        t.why ? el("p", "task-why-main", el("strong", "", "Почему просрочена: "), t.why) : null,
         p.flags.length ? bullets(p.flags, "") : null,
         el("h3", "", "Что дальше"), el("p", "", n.text),
         n.meeting ? button("Открыть встречу «" + n.meeting.title + "»", () => openMeeting(n.meeting), "quiet") : null,
@@ -224,8 +231,6 @@ function taskView(host, id) {
         el("h3", "", "Письма по теме — клиент, исполнитель"), rows(p.letters, letter, "Писем по теме нет."),
         el("h3", "", "Из памяти и протоколов"), rows(p.facts, fact, "В памяти по теме ничего нет."),
         el("h3", "", "Что уже делали"), rows(p.history, h => el("div", "row", meta(stamp(h.at)), h.summary), "Пока ничего.")));
-    const back = mount.querySelector(".back-link");
-    back.href = "#meetings/tasks";
   });
 }
 
@@ -304,7 +309,8 @@ function decisionItem(d, refresh) {
     preparedBlock(d.prepared, drafts), actions, error);
 }
 
-function todayPage(host) {
+function todayPage(host, sub = "") {
+  if (sub.startsWith("t/")) return taskView(host, decodeURIComponent(sub.slice(2)));
   const refresh = () => load(host, async mount => {
     const d = await api("/api/today");
     const decisions = d.decisions.map(item => decisionItem(item, refresh));
