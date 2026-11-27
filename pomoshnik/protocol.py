@@ -23,6 +23,14 @@ SYSTEM = """Ты секретарь руководителя. По расшиф�
  "tasks": [{"owner": "<имя как в речи>", "what": "<что сделать>", "due_text": "<срок словами из речи или пусто>",
             "quote": "<дословный фрагмент расшифровки, где поручение прозвучало>"}],
  "open_questions": ["<что не решили, риски, кто и когда не определён>"]}
+У задачи может быть поле "after": [номера задач этого протокола, начиная с 1, после которых её можно начинать].
+Ставь его, только если в речи прямо сказано, что задача идёт после других («после метрик», «когда будет витрина»).
+Задачи без "after" идут параллельно.
+Если в запросе есть задачи прошлого протокола, добавь в JSON поле
+ "previous": [{"n": <номер задачи прошлого протокола>, "status": "выполнена | в работе | перенесена | изменилась | не обсуждали",
+               "new_what": "<новая формулировка, если задача изменилась>", "new_due_text": "<новый срок словами, если его назвали>",
+               "quote": "<дословный фрагмент расшифровки, где это прозвучало>"}]
+«Изменилась» — поменялись суть, объём или исполнитель задачи; «перенесена» — поменялся только срок.
 Правила: цитата — дословно из расшифровки, 4–20 слов. Не придумывай задачи, исполнителей и сроки, которых не было.
 ИИ-помощник — не исполнитель: что он обещал «вынести руководителю», — задача руководителя (owner «Руководитель»).
 Реплики подписаны «Участник» без имени: исполнителя бери из обращения («Ольга, …») или из того, как человек назвал себя.
@@ -50,6 +58,10 @@ class Task:
     quote_ok: bool = False
     default_due: bool = False
     flags: list[str] = field(default_factory=list)
+    after: list[int] = field(default_factory=list)      # номера задач этого протокола, после которых можно начинать
+
+
+PREV_STATUSES = ("выполнена", "в работе", "перенесена", "изменилась", "не обсуждали")
 
 
 @dataclass
@@ -61,12 +73,21 @@ class Protocol:
     tasks: list[Task] = field(default_factory=list)
     open_questions: list[str] = field(default_factory=list)
     raw: dict = field(default_factory=dict)
+    previous: list[dict] = field(default_factory=list)   # сверка с задачами прошлого протокола
+    previous_id: int | None = None
+
+    def changes(self) -> list[dict]:
+        """Задачи прошлого протокола, которые изменились или перенесены: их согласует руководитель."""
+        return [x for x in self.previous if x["status"] in ("изменилась", "перенесена")]
 
     def to_dict(self) -> dict:
         d = asdict(self)
         d["meeting_end"] = self.meeting_end.isoformat()
         for t in d["tasks"]:
             t["due"] = t["due"].isoformat()
+        for x in d["previous"]:
+            for k in ("was_due", "new_due"):
+                x[k] = x[k].isoformat() if x.get(k) else None
         return d
 
 
@@ -106,7 +127,64 @@ def _from_json(data: dict, transcript: str, *, title: str, meeting_end: datetime
             task.flags.append("срок по умолчанию")
         p.tasks.append(task)
     p.open_questions = [str(x) for x in data.get("open_questions", [])]
+    _order(p, data.get("tasks", []))
+    _previous(p, data, transcript)
     return p
+
+
+def _order(p: Protocol, raw_tasks: list) -> None:
+    """Зависимости: только на задачи выше по списку (так цикла не бывает). Срок раньше, чем у предшественника, — флаг."""
+    for i, (task, raw) in enumerate(zip(p.tasks, raw_tasks), 1):
+        after = []
+        for x in (raw.get("after") or []) if isinstance(raw, dict) else []:
+            try:
+                n = int(x)
+            except (TypeError, ValueError):
+                continue
+            if 1 <= n < i and n not in after:
+                after.append(n)
+        task.after = after
+        for n in after:
+            if task.due < p.tasks[n - 1].due:
+                task.flags.append(f"срок раньше, чем у задачи {n}")
+                p.open_questions.append(f"Задача {i} ({task.owner}) идёт после задачи {n}, но её срок "
+                                        f"{task.due:%d.%m} раньше — уточнить сроки")
+
+
+def previous_snapshot(prev: "Protocol") -> list[dict]:
+    """Задачи прошлого протокола в том виде, в каком их видит модель и сверка. Хранится в новом протоколе."""
+    return [{"n": i, "owner": t.owner, "owner_id": t.owner_id, "what": t.what, "due": t.due.isoformat()}
+            for i, t in enumerate(prev.tasks, 1)]
+
+
+def _previous(p: Protocol, data: dict, transcript: str) -> None:
+    snap = {x["n"]: x for x in data.get("previous_tasks") or []}
+    if not snap:
+        return
+    p.previous_id = data.get("previous_id")
+    said = {}
+    for x in data.get("previous") or []:
+        try:
+            n = int(x.get("n"))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if n in snap and n not in said:
+            said[n] = x
+    for n, t in sorted(snap.items()):
+        x = said.get(n, {})
+        status = x.get("status") if x.get("status") in PREV_STATUSES else "не обсуждали"
+        quote = str(x.get("quote") or "")
+        quote_ok = bool(quote) and check_quote(quote, transcript, min_words=3).found
+        if status != "не обсуждали" and not quote_ok:
+            status = "не обсуждали"            # без подтверждения в расшифровке статус не меняем
+        new_due = None
+        if x.get("new_due_text") and status in ("изменилась", "перенесена"):
+            dl = parse_deadline(str(x["new_due_text"]), p.meeting_end)
+            new_due = dl.due if dl else None
+        new_what = str(x.get("new_what") or "").strip() if status == "изменилась" else ""
+        p.previous.append({"n": n, "owner": t["owner"], "owner_id": t.get("owner_id"), "was_what": t["what"],
+                           "was_due": datetime.fromisoformat(t["due"]), "status": status, "new_what": new_what,
+                           "new_due": new_due, "quote": quote, "quote_ok": quote_ok})
 
 
 def _rules_block(rules: list[str]) -> str:
@@ -116,9 +194,42 @@ def _rules_block(rules: list[str]) -> str:
 
 
 def build_protocol(llm, transcript: str, *, title: str, meeting_end: datetime, org: Org | None,
-                   rules: list[str] | None = None) -> Protocol:
-    data = llm.complete_json(SYSTEM + _rules_block(rules or []), f"Встреча: {title}\nРасшифровка:\n{transcript}")
+                   rules: list[str] | None = None, previous: "Protocol | None" = None,
+                   previous_id: int | None = None) -> Protocol:
+    user = f"Встреча: {title}\n"
+    snap = previous_snapshot(previous) if previous and previous.tasks else []
+    if snap:
+        user += (f"\nЗадачи прошлого протокола «{previous.title}» от {previous.meeting_end:%d.%m}:\n"
+                 + "\n".join(f"{x['n']}. {x['owner']}: {x['what']} — до {datetime.fromisoformat(x['due']):%d.%m}"
+                             for x in snap) + "\n")
+    data = llm.complete_json(SYSTEM + _rules_block(rules or []), f"{user}Расшифровка:\n{transcript}")
+    if not isinstance(data, dict):
+        data = {}
+    if snap:
+        data["previous_tasks"], data["previous_id"] = snap, previous_id
     return _from_json(data, transcript, title=title, meeting_end=meeting_end, org=org)
+
+
+def _steps(p: Protocol) -> list[list[int]]:
+    """Шаги выполнения: задача попадает на шаг после всех, от которых зависит. Задачи одного шага — параллельно."""
+    level: dict[int, int] = {}
+    for i, t in enumerate(p.tasks, 1):
+        level[i] = 1 + max((level[n] for n in t.after), default=0)
+    steps: dict[int, list[int]] = {}
+    for i, lv in level.items():
+        steps.setdefault(lv, []).append(i)
+    return [steps[k] for k in sorted(steps)]
+
+
+def _prev_line(x: dict) -> str:
+    head = f"- {x['n']}. {x['owner']}: {x['was_what']} — {x['status']}"
+    if x["status"] == "изменилась":
+        new_due = x["new_due"] or x["was_due"]
+        return (f"{head}: было «{x['was_what']}» до {_d(x['was_due'])} → стало «{x['new_what'] or x['was_what']}» "
+                f"до {_d(new_due)} ⚠️ согласуйте")
+    if x["status"] == "перенесена":
+        return f"{head}: до {_d(x['was_due'])} → до {_d(x['new_due']) if x['new_due'] else 'срок не назван'} ⚠️ согласуйте"
+    return head
 
 
 def _d(dt: datetime) -> str:
@@ -134,10 +245,20 @@ def render_markdown(p: Protocol) -> str:
     if p.decisions:
         out += ["", "## Решения"]
         out += [f"- {d.text}" + ("" if d.quote_ok else " ⚠️ не подтверждено расшифровкой") for d in p.decisions]
+    if p.previous:
+        out += ["", "## По прошлому протоколу"]
+        out += [_prev_line(x) for x in p.previous]
     out += ["", "## Дальнейшие шаги"]
     for i, t in enumerate(p.tasks, 1):
         flags = f" ⚠️ {', '.join(t.flags)}" if t.flags else ""
-        out.append(f"- [ ] {i}. {t.owner}: {t.what} — до {_d(t.due)}{flags}")
+        after = f" (после {', '.join(map(str, t.after))})" if t.after else ""
+        out.append(f"- [ ] {i}. {t.owner}: {t.what} — до {_d(t.due)}{after}{flags}")
+    if any(t.after for t in p.tasks):
+        parts = []
+        for k, step in enumerate(_steps(p), 1):
+            what = f"задача {step[0]}" if len(step) == 1 else f"задачи {', '.join(map(str, step))} — параллельно"
+            parts.append(f"Шаг {k}: {what}")
+        out.append("> Порядок: " + " → ".join(parts))
     if p.open_questions:
         out += ["", "## Предложения ИИ", "> Нерешённые вопросы и риски:"]
         out += [f"> {i}. {q}" for i, q in enumerate(p.open_questions, 1)]
@@ -145,7 +266,8 @@ def render_markdown(p: Protocol) -> str:
 
 
 def questions_from_previous(p: Protocol) -> list[str]:
-    qs = [f"{t.owner}, по задаче «{t.what}» срок {t.due.strftime('%d.%m')} — что готово?" for t in p.tasks]
+    qs = [f"{t.owner}, по задаче «{t.what}» срок {t.due.strftime('%d.%m')} — что готово? Задача не поменялась?"
+          for t in p.tasks]
     qs += [f"В прошлый раз остался открытым вопрос: {q}. Есть решение?" for q in p.open_questions]
     return qs
 
@@ -233,6 +355,10 @@ class ProtocolStore:
         user = (f"Протокол (JSON):\n{json.dumps(rec['data'], ensure_ascii=False)}\n\nПравка руководителя: {instruction}"
                 f"\n\nРасшифровка для цитат:\n{rec['transcript']}")
         data = llm.complete_json(EDIT_SYSTEM, user)
+        data = data if isinstance(data, dict) else {}
+        for k in ("previous_tasks", "previous_id", "previous"):   # сверку с прошлым протоколом правка не теряет
+            if k in rec["data"] and k not in data:
+                data[k] = rec["data"][k]
         self.conn.execute("UPDATE protocols SET data = ? WHERE id = ?", (json.dumps(data, ensure_ascii=False), pid))
         self.conn.execute("INSERT INTO protocol_edits (protocol_id, at, instruction) VALUES (?,?,?)",
                           (pid, to_db(self.clock.now()), instruction))

@@ -149,6 +149,42 @@ def held_from_journal(journal: Journal) -> list[dict]:
     return [h for eid, h in held.items() if eid not in released]
 
 
+TASK_DONE = ("выполнена",)
+_UPDATE_STATUS = {"выполнена": "выполнена", "в работе": "в работе", "перенесена": "перенесена", "изменилась": "изменена"}
+
+
+def protocol_tasks(journal: Journal) -> list[dict]:
+    """Задачи из утверждённых протоколов с учётом сверки на следующих встречах и порядка выполнения.
+
+    Статус: «новая», «в работе», «выполнена», «перенесена», «изменена» или «ждёт задачи N», пока предшественник
+    не выполнен."""
+    tasks: dict[tuple, dict] = {}
+    per_protocol: dict = {}
+    for a in journal.actions():
+        pl = a["payload"] or {}
+        if a["kind"] == "task_assigned":
+            pid = pl.get("protocol_id")
+            per_protocol[pid] = per_protocol.get(pid, 0) + 1
+            n = pl.get("n") or per_protocol[pid]
+            owner, what = (a["summary"].split(": ", 1) + [""])[:2]
+            tasks[(pid, n)] = {"protocol_id": pid, "n": n, "owner": pl.get("owner") or owner,
+                               "what": pl.get("what") or what.rsplit(" до ", 1)[0], "owner_id": pl.get("owner_id"),
+                               "due": datetime.fromisoformat(pl["due"]).date(), "after": pl.get("after") or [],
+                               "status": "новая", "updated": False, "action_id": a["id"]}
+        elif a["kind"] == "task_update" and (pl.get("protocol_id"), pl.get("n")) in tasks:
+            t = tasks[(pl["protocol_id"], pl["n"])]
+            t["status"], t["updated"] = _UPDATE_STATUS.get(pl.get("status"), t["status"]), True
+            if pl.get("what"):
+                t["what"] = pl["what"]
+            if pl.get("due"):
+                t["due"] = datetime.fromisoformat(pl["due"]).date()
+    for t in tasks.values():
+        waiting = [n for n in t["after"] if tasks.get((t["protocol_id"], n), {}).get("status") not in TASK_DONE]
+        if waiting and not t["updated"]:
+            t["status"] = "ждёт задачи " + ", ".join(map(str, waiting))
+    return list(tasks.values())
+
+
 def prepared_from_journal(journal: Journal) -> dict[str, dict]:
     return {a["payload"]["key"]: a["payload"] for a in journal.actions() if a["kind"] == "decision_prepared"}
 
@@ -523,9 +559,19 @@ class Assistant:
         pid = self.protocols.last_approved()
         return questions_from_previous(self.protocols.protocol(pid, self.p.org)) if pid else []
 
+    def previous_protocol(self, title: str, before: datetime) -> int | None:
+        """Прошлый утверждённый протокол той же встречи (по названию), иначе последний утверждённый до неё."""
+        approved = [r for r in (self.protocols.get(i) for i in self.protocols.ids())
+                    if r["status"] == "утверждён" and r["meeting_end"] <= before]
+        same = [r for r in approved if r["title"] == title]
+        pick = same or approved
+        return max(pick, key=lambda r: r["meeting_end"])["id"] if pick else None
+
     def new_meeting(self, transcript: str, title: str, meeting_end: datetime, meeting_uid: str | None = None) -> int:
+        prev_id = self.previous_protocol(title, meeting_end)
+        prev = self.protocols.protocol(prev_id, self.p.org) if prev_id else None
         p = build_protocol(self.llm, transcript, title=title, meeting_end=meeting_end, org=self.p.org,
-                           rules=self.protocols.leader_rules())
+                           rules=self.protocols.leader_rules(), previous=prev, previous_id=prev_id)
         pid = self.protocols.save_draft(p, transcript, meeting_uid=meeting_uid)
         self._send_protocol(pid, p)
         rec = self.protocols.get(pid)
@@ -534,8 +580,12 @@ class Assistant:
         return pid
 
     def _send_protocol(self, pid: int, p) -> int:
+        head = "Протокол на утверждение\n\n"
+        if p.changes():
+            head += (f"⚠️ Изменились задачи прошлого протокола: {len(p.changes())}. "
+                     "Утверждая протокол, вы согласуете изменения.\n\n")
         return self.pult.send_buttons(
-            "Протокол на утверждение\n\n" + md_to_html(render_markdown(p)),
+            head + md_to_html(render_markdown(p)),
             [[Button("Утвердить", f"prot:ok:{pid}"), Button("Править", f"prot:edit:{pid}"),
               Button("Отклонить", f"prot:no:{pid}")]])
 
@@ -543,21 +593,75 @@ class Assistant:
         if not self.protocols.approve(pid):
             return 0
         p = self.protocols.protocol(pid, self.p.org)
+        rec = self.protocols.get(pid)
         body = render_markdown(p)
-        to = sorted({self.p.org.email_of(self.p.org.by_id[t.owner_id]) for t in p.tasks if t.owner_id} if self.p.org else set())
+        to = self._protocol_recipients(p, rec)
         for addr in to:
             self.send(addr, "protocol_mail", "протокол", встреча=p.title, протокол=body)
-        for t in p.tasks:
+        for i, t in enumerate(p.tasks, 1):
             self._log("task_assigned", path="now", summary=f"{t.owner}: {t.what} до {t.due.date().isoformat()}",
-                      payload={"protocol_id": pid, "owner_id": t.owner_id, "due": t.due.isoformat()})
-        rec = self.protocols.get(pid)
+                      payload={"protocol_id": pid, "owner_id": t.owner_id, "due": t.due.isoformat(), "n": i,
+                               "after": t.after, "owner": t.owner, "what": t.what})
+        self._apply_previous(p, pid)
         self.remember(rec["transcript"], source=f"протокол {pid}", who=self.p.name, when=p.meeting_end, title=p.title)
         self._log("protocol_sent", actor="human", path="decision",
                   summary=f"{p.title}: разослано {len(to)}, задач {len(p.tasks)}",
                   payload={"protocol_id": pid, "minutes_to_approved": rec["minutes_to_approved"],
                            "minutes_saved": PROTOCOL_MINUTES_SAVED})
-        self.pult.send_text(f"Протокол утверждён и разослан: {len(to)} адресатов, задач {len(p.tasks)}.")
+        self.pult.send_text(f"Протокол утверждён и разослан участникам встречи и исполнителям: {len(to)} адресатов, "
+                            f"задач {len(p.tasks)}.")
         return len(to)
+
+    def _protocol_recipients(self, p, rec: dict) -> list[str]:
+        """Кому протокол: участники встречи по календарю, исполнители новых и изменённых задач. Руководителю — нет."""
+        org = self.p.org
+        if not org:
+            return []
+        m = next((x for x in self.meetings if rec.get("meeting_uid") and x.uid == rec["meeting_uid"]), None) or \
+            next((x for x in self.meetings if x.title == p.title and x.start.date() == p.meeting_end.date()), None)
+        by_name = {x.name: x for x in org.people}
+        to = set()
+        for a in (m.attendees if m else ()):
+            if "@" in a:
+                to.add(a.strip().lower())
+            elif a in by_name:
+                to.add(org.email_of(by_name[a]))
+        ids = [t.owner_id for t in p.tasks] + [x["owner_id"] for x in p.previous if x["status"] != "не обсуждали"]
+        to |= {org.email_of(org.by_id[i]) for i in ids if i in org.by_id}
+        to.discard(org.email_of(org.leader))
+        return sorted(to)
+
+    def _apply_previous(self, p, pid: int) -> None:
+        """Утверждённая сверка с прошлым протоколом: статусы задач, изменения, «можно начинать» по цепочке."""
+        if not p.previous_id:
+            return
+        for x in p.previous:
+            if x["status"] == "не обсуждали":
+                continue
+            self._log("task_update", path="decision", actor="human",
+                      summary=f"{x['owner']}: {x['was_what']} — {x['status']}",
+                      payload={"protocol_id": p.previous_id, "n": x["n"], "status": x["status"],
+                               "what": x["new_what"] or None,
+                               "due": x["new_due"].isoformat() if x["new_due"] else None, "by_protocol": pid})
+        self._release_dependents()
+
+    def _release_dependents(self) -> None:
+        """Задача, у которой все предшественники выполнены, начинается: исполнителю письмо «можно начинать» один раз."""
+        tasks = protocol_tasks(self.j)
+        told = {(a["payload"]["protocol_id"], a["payload"]["n"]) for a in self.j.actions() if a["kind"] == "task_unblocked"}
+        for t in tasks:
+            if not t["after"] or (t["protocol_id"], t["n"]) in told or t["status"].startswith("ждёт"):
+                continue
+            if t["status"] in TASK_DONE or not t["owner_id"] or not self.p.org:
+                continue
+            who = self.p.org.by_id.get(t["owner_id"])
+            if not who:
+                continue
+            before = ", ".join(f"«{x['what']}»" for x in tasks if x["protocol_id"] == t["protocol_id"] and x["n"] in t["after"])
+            self.send(self.p.org.email_of(who), "task_go", "можно_начинать", имя=who.name.split()[0], задача=t["what"],
+                      после=before, срок=t["due"].strftime("%d.%m"))
+            self._log("task_unblocked", path="now", summary=f"{who.name}: можно начинать «{t['what']}»",
+                      payload={"protocol_id": t["protocol_id"], "n": t["n"], "minutes_saved": 3})
 
     # ---------------- Telegram ----------------
     def handle(self, u: Update) -> None:

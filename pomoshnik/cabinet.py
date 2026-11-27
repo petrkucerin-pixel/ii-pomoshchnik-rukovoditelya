@@ -11,7 +11,7 @@ from urllib.parse import urlencode
 
 from yadro.journal import from_db
 
-from .assistant import Assistant, meeting_brief
+from .assistant import Assistant, meeting_brief, protocol_tasks
 from .memory import collapse, period, topics
 from .metrics import compute_metrics
 from .plan import Meeting, TaskRow, build_day_plan, focus_windows
@@ -133,14 +133,9 @@ def task_dict(t: TaskRow, today: date, source: str = "tasks.csv") -> dict:
 def all_tasks(a: Assistant) -> list[tuple[TaskRow, str]]:
     """Задачи из файла заказчика и из утверждённых протоколов."""
     rows: list[tuple[TaskRow, str]] = [(t, "tasks.csv") for t in a.tasks]
-    for x in a.j.actions():
-        if x["kind"] != "task_assigned":
-            continue
-        pl = x["payload"]
-        owner, what = (x["summary"].split(": ", 1) + [""])[:2]
-        what = what.rsplit(" до ", 1)[0]
-        rows.append((TaskRow(f"p{pl.get('protocol_id')}-{x['id']}", what, owner,
-                             datetime.fromisoformat(pl["due"]).date(), "новая"), f"протокол {pl.get('protocol_id')}"))
+    for t in protocol_tasks(a.j):       # статусы со сверки на следующих встречах и порядок «ждёт задачи N»
+        rows.append((TaskRow(f"p{t['protocol_id']}-{t['action_id']}", t["what"], t["owner"], t["due"], t["status"]),
+                     f"протокол {t['protocol_id']}"))
     return rows
 
 
