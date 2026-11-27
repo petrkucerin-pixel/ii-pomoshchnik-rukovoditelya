@@ -395,6 +395,8 @@ class Assistant:
                 d = Decision("в_сводку", cat or "статус", "ответ исполнителя на вопрос помощника о задаче",
                              summary=summ or e.subject, confidence=conf, sender_role=d.sender_role)
                 self._remember_answer(e, asked, rec, eid)
+                from . import cabinet           # здесь, а не наверху: cabinet сам импортирует assistant
+                cabinet.apply_answer_date(self, asked, e.body or "", e.from_name)
             report = Report(e.id, e.from_name, e.from_email, rec, e.subject, e.body) \
                 if d.category in REPORT_CATEGORIES else None
             self._act(e, d, eid, report)
