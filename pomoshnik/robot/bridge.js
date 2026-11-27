@@ -4,7 +4,7 @@
 (() => {
   "use strict";
   const W = 640, H = 360;
-  const bridge = window.__bridge = {transcript: [], log: [], state: "init", avatarPCs: new WeakSet()};
+  const bridge = window.__bridge = {transcript: [], log: [], state: "init", avatarPCs: new WeakSet(), pcs: 0};
   const log = m => { bridge.log.push(new Date().toISOString().slice(11, 19) + " " + m); };
 
   let ctx = null, meetingDest = null, avatarDest = null, canvas = null, g = null, video = null;
@@ -19,6 +19,20 @@
       osc.connect(mute); mute.connect(meetingDest); mute.connect(avatarDest); osc.start();
     }
     if (ctx.state !== "running") ctx.resume().catch(() => {});
+    if (!bridge.meter) {
+      const an = ctx.createAnalyser(), buf = new Float32Array(2048);
+      an.fftSize = 2048;
+      ctx.createMediaStreamSource(meetingDest.stream).connect(an);
+      let peak = 0, heard = 0;
+      bridge.meter = setInterval(() => {
+        an.getFloatTimeDomainData(buf);
+        for (const v of buf) peak = Math.max(peak, Math.abs(v));
+        if (++heard >= 30) {                    // 30 × 0,5 с = 15 с
+          if (peak > 0.01) log("аватару слышно встречу, пик " + peak.toFixed(2));
+          peak = 0; heard = 0;
+        }
+      }, 500);
+    }
     return ctx;
   }
   function screen() {
@@ -65,11 +79,14 @@
   window.RTCPeerConnection = function (...args) {
     const pc = new NativePC(...args);
     if (bridge.state === "starting") bridge.avatarPCs.add(pc);      // соединения SDK аватара — их звук не слушаем
+    const pcN = ++bridge.pcs;
     pc.addEventListener("track", ev => {
       if (ev.track.kind !== "audio" || bridge.avatarPCs.has(pc)) return;
       const src = audio().createMediaStreamSource(new MediaStream([ev.track]));
       src.connect(meetingDest);
-      log("звук участника подключён к аватару");
+      const tag = "соединение " + pcN + ", дорожка " + ev.track.id.slice(0, 8);
+      log("звук участника подключён к аватару (" + tag + ")");
+      ev.track.addEventListener("ended", () => log("дорожка закончилась (" + tag + ")"));
     });
     return pc;
   };
