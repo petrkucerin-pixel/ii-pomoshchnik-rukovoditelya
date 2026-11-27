@@ -281,9 +281,6 @@ function todayPage(host) {
         card("Задачи", "list", el("h3", "", "Просроченные"), rows(d.overdue, taskRow, "Просроченных задач нет."),
           el("h3", "", "Ближайшие"), rows(d.due_soon, taskRow, "Ближайших сроков нет."))),
       stack(illus(card("Встречи дня", "meetings", schedule), "calendar"),
-        card("Окна для фокуса", "focus",
-          el("p", "reason", "Свободное время без встреч от часа — под стратегию и встречи один на один. Помощник не ставит сюда операционные встречи."),
-          rows(d.focus, f => el("p", "focus-row", interval(f)), "Свободных окон нет.")),
         card("Сводка помощника", "mail",
           el("p", "reason", "Что помощник сделал сам, без вас: передал письма, ответил, прочитал отчёты."),
           bullets(d.digest, "Пока нет записей.")))));
@@ -746,6 +743,7 @@ function calendarView(host) {
         el("div", "actions", prev, button("Сегодня", () => move(today)), next, add, protocols, tasks));
       load(board, async area => {
         const data = await api("/api/meetings?" + new URLSearchParams({start, days: step}));
+        data.focus = [];                  // окна для фокуса не показываем (решение Пита 27.11)
         if (!area.isConnected) return;
         area.replaceChildren(daily ? dayCalendar(data, day, () => {}) : weekCalendar(data, today, () => {}));
       });
