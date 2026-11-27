@@ -176,13 +176,34 @@ def risk_items(a: Assistant, today: date, days: int = 7) -> list[dict]:
         seen.add(x["summary"])
         srcs = [{"id": r.id, "from": r.from_name, "at": r.received.isoformat(), "subject": r.subject, "body": r.body}
                 for r in (reports.get(s) for s in pl.get("sources", [])) if r]
+        # Только то, что относится к этому риску: тот же отчёт или вопрос его автору.
+        authors = {s["from"] for s in srcs}
+        ids = set(pl.get("sources", []))
         done = [{"to_name": y["payload"].get("to_name"), "topic": y["payload"].get("topic"),
                  "question": y["payload"].get("question")}
                 for y in acts if y["payload"].get("day") == pl["day"] and y["payload"].get("to")
-                and y["payload"].get("question")]
+                and y["payload"].get("question")
+                and (ids & set(y["payload"].get("sources", [])) or y["payload"].get("to_name") in authors)]
         out.append({"text": x["summary"], "day": pl["day"], "leader": pl.get("leader", ""), "sources": srcs,
-                    "actions": done})
+                    "actions": done, "next": _risk_next(a, x["summary"], authors, done, today)})
     return out
+
+
+def _risk_next(a: Assistant, text: str, authors: set[str], done: list[dict], today: date) -> dict:
+    """Что делать руководителю: суть одной строкой, сейчас ли нужно его участие, где обсудить."""
+    m = re.search(r"(\d+(?:[.,]\d+)?)\s*%", text)
+    gap = f"До плана не хватает {100 - float(m.group(1).replace(',', '.')):g} %. " if m and float(m.group(1).replace(",", ".")) < 100 else ""
+    who = ", ".join(sorted(authors)) or "исполнителя"
+    meet = next((x for x in a.meetings if x.start.date() >= today and authors & set(x.attendees)), None)
+    if done:
+        asked = ", ".join(sorted({d["to_name"].split()[0] for d in done}))
+        now = f"Сейчас от вас ничего не нужно: помощник уже запросил подробности ({asked}) и ответы пришлёт в сводку."
+    else:
+        now = f"Помощник исполнителям не писал — спросите {who} сами."
+    then = (f"Если к встрече ответа нет или прогноз не растёт — обсудите с {who} на «{meet.title}» "
+            f"{meet.start:%d.%m в %H:%M}.") if meet else f"Если ответа нет — назначьте встречу с {who}."
+    return {"text": gap + now, "then": then,
+            "meeting": {"uid": meet.uid, "title": meet.title, "start": meet.start.isoformat()} if meet else None}
 
 
 def _risks(a: Assistant, today: date, days: int = 7) -> list[str]:

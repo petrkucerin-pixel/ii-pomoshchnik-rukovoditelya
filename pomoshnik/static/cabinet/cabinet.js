@@ -232,9 +232,12 @@ function riskItem(r) {
   const done = r.actions.length
     ? el("ul", "bullets", r.actions.map(x => el("li", "", el("strong", "", x.to_name + ": "), x.question)))
     : hint("Исполнителям помощник пока не писал.");
-  return el("div", "risk", el("p", "", r.text),
+  const n = r.next;
+  const todo = n ? el("div", "risk-todo", el("strong", "", "Что от вас: "), n.text, el("p", "reason", n.then),
+    n.meeting ? button("Открыть встречу «" + n.meeting.title + "»", () => openMeeting(n.meeting), "quiet") : null) : null;
+  return el("div", "risk", el("p", "", r.text), todo,
     fold("Подробнее", el("h3", "", "Откуда"), src.length ? src : hint("Источник не сохранён."),
-      r.leader ? el("p", "reason", r.leader) : null, el("h3", "", "Что помощник уже сделал"), done));
+      el("h3", "", "Что помощник уже сделал"), done));
 }
 
 function decisionItem(d, refresh) {

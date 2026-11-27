@@ -382,3 +382,5 @@ select { width: 100%; min-height: 44px; padding: 9px 12px; border-radius: var(--
 .risk .fold { margin-top: 6px; }
 .risk-src { margin: 6px 0; padding: 8px 10px; border-radius: var(--radius-s, 8px); background: rgba(255, 255, 255, .55); }
 .risk-src p { margin-top: 4px; white-space: pre-line; }
+.risk-todo { margin-top: 6px; overflow-wrap: anywhere; }
+.risk-todo .reason { margin: 4px 0; }

@@ -324,3 +324,13 @@ def test_risk_has_details_source_letters_and_what_assistant_did(env):
     assert src["from"] and src["subject"] and src["body"] and src["at"]          # отчёт, из которого риск
     assert "%" in src["body"] or any(ch.isdigit() for ch in src["body"])
     assert all(x["to_name"] and x["question"] for x in r["actions"])           # кому помощник уже написал
+
+
+def test_risk_shows_only_related_actions_and_what_leader_should_do(env):
+    c, _, _ = env
+    r = c.get("/api/today").json()["risk_items"][0]
+    author = r["sources"][0]["from"]
+    assert r["actions"] and all(x["to_name"] == author for x in r["actions"])      # чужие отчёты не примешаны
+    nxt = r["next"]
+    assert "не хватает 6 %" in nxt["text"] and "ничего не нужно" in nxt["text"]
+    assert nxt["meeting"] and nxt["meeting"]["title"] in nxt["then"]
