@@ -652,3 +652,23 @@ def test_backfill_returns_sent_letters_missing_in_journal(env, tmp_path):
     assert len(sent) == before + 2
     fwd = next(x for x in sent if x["subject"] == "Fwd: Запрос коммерческого предложения" and x["reply_to"] == "m002")
     assert fwd["status"]["label"] == "Помощник передал исполнителю"
+
+
+def test_letters_sent_from_own_mailbox_appear_in_sent_once(env):
+    from types import SimpleNamespace
+    from datetime import datetime
+    c, a, _ = env
+    mine = SimpleNamespace(id="<own-1@yandex.ru>", from_name="Иван Петров", from_email="pit@yandex.ru",
+                           to="client1@romashka.example", subject="Re: Сроки запуска интеграции", body="Подтверждаю 25.12.",
+                           received=datetime.fromisoformat("2026-12-11T09:30:00+05:00"), in_reply_to="m001", attachments=())
+    a.send_mail = SimpleNamespace(send=a.send_mail.send, fetch_sent=lambda: [mine])
+    assert a.sync_sent() == 1 and a.sync_sent() == 0                        # второй раз не задваивается
+    out = [x for x in c.get("/api/mail").json()["letters"] if x["direction"] == "out"]
+    got = next(x for x in out if x["subject"] == "Re: Сроки запуска интеграции" and x["status"]["label"] == "Вы отправили из почты")
+    assert got["reply_to"] == "m001" and got["at"].startswith("2026-12-11T09:30")
+
+
+def test_poll_mail_once_runs_inbox_and_sent(env):
+    c, a, _ = env
+    res = srv.stand.poll_mail()
+    assert "из_отправленных" in res

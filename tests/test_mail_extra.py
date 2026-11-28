@@ -147,3 +147,49 @@ def test_smtp_disconnect_after_accepted_data_still_returns_message_id():
     assert sent["From"] == "test@example.org"
     assert sent["To"] == "user@example.org"
     assert b"=?utf-8?" in sent.as_bytes().lower()
+
+
+# --- «Отправленные» Яндекса: письма руководителя, отправленные мимо кабинета ---
+class _SentIMAP:
+    """INBOX и Sent — отдельные папки со своими UID; LIST помечает Sent флагом."""
+    def __init__(self, boxes):
+        self.boxes, self.box = boxes, None
+
+    def login(self, u, p):
+        return "OK", [b"ok"]
+
+    def list(self):
+        return "OK", [b'(\HasNoChildren) "|" INBOX', b'(\HasNoChildren \Sent) "|" Sent']
+
+    def select(self, box, readonly=False):
+        self.box = box
+        return "OK", [str(len(self.boxes[box])).encode()]
+
+    def uid(self, cmd, *args):
+        store = self.boxes[self.box]
+        if cmd.lower() == "search":
+            start = int(args[-1].split(":")[0])
+            found = [u for u in store if u >= start] or ([max(store)] if store else [])
+            return "OK", [" ".join(map(str, found)).encode()]
+        u = int(args[0])
+        return "OK", [(f"{u} (UID {u} RFC822 {{1}}".encode(), store[u]), b")"]
+
+    def logout(self):
+        return "BYE", []
+
+
+def _raw(mid, subj):
+    return (f"Message-ID: <{mid}@x>\r\nFrom: Pit <pit@yandex.ru>\r\nTo: olga@company.example\r\n"
+            f"Subject: {subj}\r\nDate: Sat, 28 Nov 2026 09:00:00 +0500\r\n\r\nТекст").encode()
+
+
+def test_yandex_reads_sent_folder_separately_from_inbox(tmp_path):
+    from pomoshnik.channels.mail import YandexMailbox
+    boxes = {"INBOX": {1: _raw("in1", "Входящее")}, "Sent": {5: _raw("s5", "Отправил сам"), 6: _raw("s6", "Ещё")}}
+    box = YandexMailbox("pit@yandex.ru", "pw", imap_factory=lambda: _SentIMAP(boxes), state_path=tmp_path / "imap.json")
+    assert [e.subject for e in box.fetch_new()] == ["Входящее"]
+    assert [e.subject for e in box.fetch_sent()] == ["Отправил сам", "Ещё"]
+    assert box.fetch_sent() == [] and box.fetch_new() == []                 # у каждой папки свой курсор
+    boxes["Sent"][7] = _raw("s7", "Новое")
+    assert [e.subject for e in box.fetch_sent()] == ["Новое"]
+    assert (tmp_path / "imap_sent.json").exists()

@@ -67,6 +67,16 @@ class CombinedMailbox:
                 self.last_error = str(e)
         return letters
 
+    def fetch_sent(self):
+        """«Отправленные» настоящего ящика: письма руководителя, отправленные мимо кабинета."""
+        if not self.real:
+            return []
+        try:
+            return self.real.fetch_sent()
+        except RuntimeError as e:
+            self.last_error = str(e)
+            return []
+
     def send(self, to, subject, body, in_reply_to=None, attachments=()):
         kw = {"attachments": attachments} if attachments else {}
         if self.real and not to.lower().endswith(".example"):
@@ -201,6 +211,34 @@ class Stand:
         a.transcribe = LocalWhisper() if available() else None     # голос в Telegram (TASK_16)
         return a
 
+    def poll_mail(self) -> dict:
+        """Один проход почты: новые входящие — разбор, «Отправленные» ящика — в журнал."""
+        with self.lock:
+            counts = self.assistant.process_inbox()
+            counts["из_отправленных"] = self.assistant.sync_sent()
+        return counts
+
+    def start_mail(self):
+        """Почта сама раз в MAIL_POLL_SECONDS (по умолчанию минута): руководитель видит письма без команд."""
+        every = int(os.environ.get("MAIL_POLL_SECONDS", "60") or 0)
+        if every <= 0:
+            self.status["mail"] = "выключено"
+            return
+        self.status["mail"] = f"каждые {every} с"
+        threading.Thread(target=self._mail_loop, args=(every,), daemon=True).start()
+
+    def _mail_loop(self, every: int):
+        while True:
+            try:
+                c = self.poll_mail()
+                self.status["mail_last"] = datetime.now(TZ_EKB).isoformat(timespec="seconds")
+                if any(v for k, v in c.items() if k != "ревизор"):
+                    log.info("почта: %s", c)
+            except Exception as e:          # сбой ящика не должен ронять стенд
+                log.exception("проверка почты")
+                self.status["mail"] = f"ошибка: {type(e).__name__}"
+            time.sleep(every)
+
     def start_preparer(self):
         """Фоном готовит карточки решений: черновик, совет, факты. Включается PREPARE_DECISIONS=1 в .env."""
         if os.environ.get("PREPARE_DECISIONS", "").lower() not in ("1", "true", "yes"):
@@ -299,6 +337,7 @@ async def _lifespan(_app):
     stand.start_bot()
     stand.start_autopilot()
     stand.start_preparer()
+    stand.start_mail()
     yield
 
 

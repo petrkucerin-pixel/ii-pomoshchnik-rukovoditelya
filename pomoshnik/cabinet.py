@@ -152,7 +152,8 @@ SENT_LABELS = {"передача": ("assistant", "Помощник переда�
                "выяснение": ("assistant", "Помощник: что с задачей"), "можно_начинать": ("assistant", "Помощник: можно начинать"),
                "решение": ("you", "По вашему решению"), "протокол": ("you", "Протокол после вашего утверждения"),
                "приглашение": ("you", "Ваше приглашение на встречу"), "напоминание": ("you", "Напоминание по вашей кнопке"),
-               "поручение": ("you", "Ваше поручение"), "ваше_письмо": ("you", "Вы написали")}
+               "поручение": ("you", "Ваше поручение"), "ваше_письмо": ("you", "Вы написали"),
+               "из_почты": ("you", "Вы отправили из почты")}
 
 
 def deleted_letters(a: Assistant) -> set[str]:
@@ -242,7 +243,7 @@ def _outgoing(a: Assistant) -> list[dict]:
         by, label = SENT_LABELS.get(pl.get("kind", ""), ("assistant", "Отправил помощник"))
         if pl.get("reply_to_id"):            # письмо руководителя из кабинета: на какое входящее отвечает
             ext[eid] = pl["reply_to_id"]
-        out.append({"id": f"out-{x['id']}", "direction": "out", "at": _iso(x["at"]),
+        out.append({"id": f"out-{x['id']}", "direction": "out", "at": pl.get("sent_at") or _iso(x["at"]),
                     "from_name": a.signature.removeprefix("— "), "from_email": a.p.org.email_of(a.p.org.leader)
                     if a.p.org else "", "to_name": "", "to_email": pl.get("to", ""),
                     "subject": pl.get("subject", ""), "body": pl.get("body", ""), "category": pl.get("kind", ""),

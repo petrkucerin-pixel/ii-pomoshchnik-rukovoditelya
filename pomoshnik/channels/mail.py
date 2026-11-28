@@ -244,12 +244,16 @@ class YandexMailbox:
         self._state_path = Path(state_path) if state_path is not None else None
         self._lock = _file_lock(self._state_path) if self._state_path is not None else Lock()
         self._cursor = _Cursor()
+        self._sent_cursor = _Cursor()
+        self._sent_path = (self._state_path.with_name(self._state_path.stem + "_sent.json")
+                           if self._state_path is not None else None)
 
-    def _load_cursor(self) -> _Cursor:
-        if self._state_path is None:
-            return self._cursor
+    def _load_cursor(self, path: Path | None = None, memory: _Cursor | None = None) -> _Cursor:
+        path = self._state_path if path is None and memory is None else path
+        if path is None:
+            return memory if memory is not None else self._cursor
         try:
-            data = json.loads(self._state_path.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8"))
         except FileNotFoundError:
             return _Cursor()
         last_uid = data["last_uid"]
@@ -257,13 +261,27 @@ class YandexMailbox:
             raise ValueError("Некорректный last_uid в файле состояния IMAP")
         return _Cursor(last_uid, data.get("uidvalidity"))
 
-    def _read_batch(self, cursor: _Cursor) -> tuple[list[Email], _Cursor]:
+    @staticmethod
+    def _sent_folder(client) -> str:
+        """Папка «Отправленные»: по флагу \\Sent из LIST, иначе стандартное имя Яндекса."""
+        if hasattr(client, "list"):
+            with suppress(Exception):
+                typ, rows = client.list()
+                for row in rows or []:
+                    line = row.decode("utf-8", "replace") if isinstance(row, bytes) else str(row)
+                    if "\\Sent" in line:
+                        name = line.rsplit(" ", 1)[-1].strip().strip('"')
+                        return f'"{name}"' if " " in name else name
+        return "Sent"
+
+    def _read_batch(self, cursor: _Cursor, folder: str = "INBOX") -> tuple[list[Email], _Cursor]:
         client = self._imap_factory()
         try:
             if isinstance(client, imaplib.IMAP4):
                 client.debug = 0
             _imap_data(client.login(self._address, self._password), "LOGIN")
-            _imap_data(client.select("INBOX", readonly=True), "SELECT INBOX")
+            box = self._sent_folder(client) if folder == "SENT" else folder
+            _imap_data(client.select(box, readonly=True), f"SELECT {folder}")
             validity = cursor.uidvalidity
             if hasattr(client, "response"):
                 _, values = client.response("UIDVALIDITY")
@@ -290,12 +308,21 @@ class YandexMailbox:
             with suppress(imaplib.IMAP4.error, OSError):
                 client.logout()
 
+    def fetch_sent(self) -> list[Email]:
+        """Новые письма из «Отправленных» ящика — то, что руководитель отправил сам, мимо кабинета."""
+        return self._fetch("SENT")
+
     def fetch_new(self) -> list[Email]:
+        return self._fetch("INBOX")
+
+    def _fetch(self, folder: str) -> list[Email]:
+        sent = folder == "SENT"
+        path = self._sent_path if sent else self._state_path
         with self._lock:
-            cursor = self._load_cursor()
+            cursor = self._load_cursor(path, self._sent_cursor if sent else self._cursor)
             for attempt in range(2):
                 try:
-                    messages, updated = self._read_batch(cursor)
+                    messages, updated = self._read_batch(cursor, folder)
                 except _ImapResponseError:
                     raise
                 except (imaplib.IMAP4.abort, OSError) as exc:
@@ -305,9 +332,12 @@ class YandexMailbox:
                 except Exception as exc:
                     failure = type(exc).__name__
                 else:
-                    if self._state_path is not None and updated != cursor:
-                        _save_cursor(self._state_path, updated)
-                    self._cursor = updated
+                    if path is not None and updated != cursor:
+                        _save_cursor(path, updated)
+                    if sent:
+                        self._sent_cursor = updated
+                    else:
+                        self._cursor = updated
                     return messages
                 # Ответ сервера может содержать пароль. Исключаем его и из traceback.
                 raise RuntimeError(f"Не удалось прочитать почту Яндекса по IMAP ({failure})")

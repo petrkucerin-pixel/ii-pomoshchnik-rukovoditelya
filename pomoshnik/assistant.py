@@ -820,6 +820,33 @@ class Assistant:
                            "kind": "решение", "template": "", "message_id": mid})
 
     # ---------------- почта руководителя из кабинета ----------------
+    def sync_sent(self) -> int:
+        """Письма из «Отправленных» ящика, которых нет в журнале (руководитель отправил из своей почты),
+        — в журнал как его письма. Отправленное из кабинета не задваивается: тот же Message-ID."""
+        fetch = getattr(self.send_mail, "fetch_sent", None) or getattr(self.mail, "fetch_sent", None)
+        if fetch is None:
+            return 0
+        letters = fetch()
+        if not letters:
+            return 0
+        known = {(a["payload"] or {}).get("message_id") for a in self.j.actions() if a["kind"] == "mail_sent"}
+        n = 0
+        for e in letters:
+            if e.id in known:
+                continue
+            row = self.j.conn.execute("SELECT id FROM events WHERE channel = 'mail' AND external_id = ?",
+                                      (e.in_reply_to or "",)).fetchone() if getattr(e, "in_reply_to", None) else None
+            to = getattr(e, "to", "") or ""
+            self._log("mail_sent", actor="human", path="now", event_id=row["id"] if row else None,
+                      summary=f"{to}: {e.subject}",
+                      payload={"to": to, "subject": e.subject, "body": e.body, "in_reply_to": e.in_reply_to,
+                               "reply_to_id": e.in_reply_to if row else None, "kind": "из_почты", "template": "",
+                               "message_id": e.id, "sent_at": e.received.isoformat() if e.received else None,
+                               "attachments": self.store_files(getattr(e, "attachments", ()))})
+            known.add(e.id)
+            n += 1
+        return n
+
     def store_files(self, files) -> list[dict]:
         """Вложения (имя, тип, байты) на диск по хешу содержимого. Возвращает описание для журнала и кабинета."""
         import hashlib
