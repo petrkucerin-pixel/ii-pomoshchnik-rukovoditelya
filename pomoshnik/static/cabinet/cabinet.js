@@ -373,8 +373,12 @@ function readingPane(m, letters, onBack) {
 function mailPage(host, folder = "") {
   if (!MAIL_FOLDERS.some(([k]) => k === folder)) folder = "inbox";
   load(host, async mount => {
-    const {letters} = await api("/api/mail");
+    const {letters, groups} = await api("/api/mail");
     const folders = el("div", "mail-folders");
+    // Фильтр «Входящих» по собеседнику — как было: контрагенты, отделы (участники совещаний и другие).
+    const titles = Object.fromEntries((groups || []).map(g => [g.key, g.title]));
+    let who = "all";
+    const whoBar = el("div", "segmented mail-who");
     const search = el("input");
     search.type = "search";
     search.placeholder = "Поиск: отправитель или тема";
@@ -400,7 +404,7 @@ function mailPage(host, folder = "") {
     }
     function render() {
       const q = search.value.trim().toLowerCase();
-      const items = inFolder(folder).filter(m => !q ||
+      const items = inFolder(folder).filter(m => who === "all" || m.group === who).filter(m => !q ||
         [m.from_name, m.from_email, m.to_name, m.to_email, m.subject].join(" ").toLowerCase().includes(q));
       list.replaceChildren(...(items.length ? items.map(m => {
         const who = m.direction === "out" ? "→ " + (m.to_name || m.to_email) : m.from_name;
@@ -416,8 +420,17 @@ function mailPage(host, folder = "") {
       if (!items.length) pane.replaceChildren();
     }
     search.addEventListener("input", render);
+    if (folder === "inbox") {
+      const box = inFolder("inbox");
+      const keys = [["all", "Все"], ["counterparty", titles.counterparty || "Контрагенты"],
+        ["team", titles.team || "Отделы: участники совещаний"], ["internal", titles.internal || "Отделы: другие"]];
+      const draw = () => whoBar.replaceChildren(...keys.map(([k, name]) => toggle(
+        name + " · " + (k === "all" ? box.length : box.filter(m => m.group === k).length), k === who,
+        () => { who = k; draw(); render(); })));
+      draw();
+    }
     pane.hidden = phone.matches;
-    mount.replaceChildren(folders, el("div", "mail-layout", el("div", "card t-card mail-col", search, list), pane));
+    mount.replaceChildren(folders, el("div", "mail-layout", el("div", "card t-card mail-col", folder === "inbox" ? whoBar : null, search, list), pane));
     render();
   });
 }

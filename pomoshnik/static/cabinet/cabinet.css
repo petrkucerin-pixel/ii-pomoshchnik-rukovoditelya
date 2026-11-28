@@ -417,3 +417,4 @@ select { width: 100%; min-height: 44px; padding: 9px 12px; border-radius: var(--
 .status-done, .status-assistant { background: rgba(70, 150, 110, .15); color: #23704b; }
 .status-info { background: rgba(120, 140, 160, .14); color: var(--muted); }
 @media (max-width: 760px) { .mail-layout { grid-template-columns: minmax(0, 1fr); } .mail-list { max-height: none; } }
+.mail-who { margin-bottom: 8px; flex-wrap: wrap; border-radius: 14px; }

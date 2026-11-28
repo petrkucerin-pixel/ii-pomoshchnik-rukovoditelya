@@ -484,7 +484,8 @@ def test_named_date_conflicting_with_plans_goes_to_leader(env):
     t = next(x for x in c.get("/api/tasks").json()["tasks"] if x["id"] == "t005")
     assert t["due"] == "2026-12-01"                                             # срок не тронут
     p = c.get("/api/tasks/t005").json()
-    assert p["proposal"]["due"] == "2026-12-22" and "Облако Плюс" in p["next"]["text"] and "18.12" in p["next"]["text"]
+    nxt = p["next"]["text"]                      # ближайшая встреча с партнёром: 11.12 (если ещё впереди) или 18.12
+    assert p["proposal"]["due"] == "2026-12-22" and "Облако Плюс" in nxt and ("11.12" in nxt or "18.12" in nxt)
 
 
 def test_reply_without_date_changes_nothing(env):
