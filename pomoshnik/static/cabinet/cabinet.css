@@ -560,4 +560,6 @@ select { width: 100%; min-height: 44px; padding: 9px 12px; border-radius: var(--
 .meeting-now { outline: 2px solid var(--ink, #13407e); outline-offset: -2px; }
 .when-chip { margin-left: auto; font-size: .8rem; font-weight: 600; color: #4b5d78; white-space: nowrap; }
 .meeting-now .when-chip { color: var(--ink, #13407e); }
+.upcoming-day h3 { margin: 10px 0 4px; font-size: .95rem; }
+.upcoming-day h3::first-letter { text-transform: uppercase; }
 

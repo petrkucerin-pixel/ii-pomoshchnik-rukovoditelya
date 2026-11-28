@@ -170,4 +170,4 @@ def test_today_refreshes_hourly_and_digest_is_today():
 def test_today_meetings_show_past_now_next():
     """Пит 28.11: «Встречи дня не обновились»."""
     js = read("cabinet.js")
-    assert "идёт сейчас" in js and "meeting-past" in js and "60 * 1000" in js
+    assert "идёт сейчас" in js and "meeting-past" in js and "60 * 1000" in js and "Ближайшие встречи" in js

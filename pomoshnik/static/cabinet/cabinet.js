@@ -317,12 +317,17 @@ function todayPage(host, sub = "") {
     queue.querySelector("h2").append(count(decisions));
     if (decisions.length > 1) queue.append(fold("Ещё в очереди · " + (decisions.length - 1), ...decisions.slice(1)));
     // Пит 28.11: «Встречи дня не обновились» — прошедшие приглушены, текущая и следующая отмечены, раз в минуту
-    const schedule = rows(d.meetings, m => {
+    const dayGroups = {};
+    for (const m of d.upcoming || []) (dayGroups[m.start.slice(0, 10)] ||= []).push(m);
+    const dayTitle = day => day === d.day ? "Сегодня" : dateLabel(day, {weekday: "long", day: "numeric", month: "long"});
+    const schedule = el("div", "", ...Object.entries(dayGroups).map(([day, ms]) => el("div", "upcoming-day",
+      el("h3", "", dayTitle(day)), rows(ms, m => {
       const row = button(el("span", "time-row", el("strong", "", interval(m)), el("span", "", m.title),
         el("span", "when-chip"), icon("arrow")), () => openMeeting(m), "row-link");
-      row.dataset.start = minute(m.start); row.dataset.end = minute(m.end);
+      if (day === d.day) { row.dataset.start = minute(m.start); row.dataset.end = minute(m.end); }
       return row;
-    }, "Встреч на сегодня нет.");
+    }, ""))));
+    if (!Object.keys(dayGroups).length) schedule.append(hint("Ближайших встреч нет."));
     const mark = () => {
       const now = new Date(), cur = now.getHours() * 60 + now.getMinutes();
       let nextSet = false;
@@ -345,7 +350,7 @@ function todayPage(host, sub = "") {
       el("div", "dashboard", stack(queue, risks,
         card("Задачи", "list", el("h3", "", "Просроченные"), rows(d.overdue, taskRow, "Просроченных задач нет."),
           el("h3", "", "Ближайшие"), rows(d.due_soon, taskRow, "Ближайших сроков нет."))),
-      stack(illus(card("Встречи дня", "meetings", schedule), "calendar"),
+      stack(illus(card("Ближайшие встречи", "meetings", schedule), "calendar"),
         card("Сводка помощника за сегодня", "mail",
           el("p", "reason", "Что помощник сделал сам, без вас: передал письма, ответил, прочитал отчёты."),
           bullets(d.digest, "Сегодня помощник ещё ничего не делал сам."),

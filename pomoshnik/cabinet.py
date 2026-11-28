@@ -621,6 +621,9 @@ def today(a: Assistant, protocols) -> dict:
                           for g in a.groups()],
             "risks": _risks(a, day), "risk_items": risk_items(a, day),
             "meetings": [meeting_short(m, a, plist) for m in plan.meetings],
+            # Пит 28.11: «не встречи дня, а просто встречи» — что впереди, с этой минуты, по дням
+            "upcoming": [meeting_short(m, a, plist) for m in sorted(a.meetings, key=lambda m: m.start)
+                         if m.end > a.now()][:8],
             "overdue": [task_dict(t, day, asked=asked_tasks(a)) for t in plan.overdue],
             "due_soon": [task_dict(t, day) for t in plan.due_soon],
             "focus": _focus(a.meetings, day),

@@ -133,3 +133,16 @@ def test_today_digest_is_for_today_and_counts_earlier(a):
     clock.advance(days=1)
     d2 = cabinet.today(asst, asst.protocols)
     assert d2["digest"] == [] and d2["digest_earlier"] == len(cabinet.digest_from_journal(asst.j, asst.p.org))
+
+
+
+def test_today_shows_upcoming_meetings_across_days(a, monkeypatch):
+    """Пит 28.11: «сегодня суббота… тут не встречи дня, а просто встречи… остальные дальше на понедельник»."""
+    from datetime import datetime as dt, timedelta
+    from pomoshnik import cabinet
+    asst, clock, _ = a
+    clock.set(clock.now().replace(hour=16, minute=10))           # пятница, рабочий день почти кончился
+    d = cabinet.today(asst, asst.protocols)
+    days = [m["start"][:10] for m in d["upcoming"]]
+    assert days and days == sorted(days) and len(set(days)) >= 2   # хвост сегодняшнего дня и следующие дни
+    assert all(m["end"] > asst.now().isoformat() for m in d["upcoming"])
