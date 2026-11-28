@@ -1230,13 +1230,13 @@ function journalRow(x) {
     if (!open || more.childElementCount) return;
     try {
       const d = await api("/api/profile/journal/" + x.id);
-      more.replaceChildren(
+      more.replaceChildren(...[      // replaceChildren не пропускает null — убираем пустые части сами
         el("strong", "", d.title),
         x.times > 1 ? hint("Повторялось " + x.times + " раз, показана последняя запись.") : null,
         d.fields.length ? el("dl", "journal-fields", ...d.fields.flatMap(f => [el("dt", "", f.label), el("dd", "", f.value)])) : null,
         ...d.blocks.map(b => el("div", "journal-block", el("span", "muted", b.label), el("p", "letter-example", b.text))),
         d.note ? hint(d.note) : null,
-        d.links.length ? el("div", "actions", ...d.links.map(l => { const a = el("a", "button-ghost", l.label); a.href = l.href; return a; })) : null);
+        d.links.length ? el("div", "actions", ...d.links.map(l => { const a = el("a", "button-ghost", l.label); a.href = l.href; return a; })) : null].filter(Boolean));
     } catch (e) {
       more.replaceChildren(hint("Не удалось загрузить подробности."));
     }
