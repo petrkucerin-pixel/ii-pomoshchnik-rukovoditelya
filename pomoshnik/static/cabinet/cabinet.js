@@ -338,8 +338,8 @@ function todayPage(host, sub = "") {
   refresh();
 }
 
-// Почта как в Outlook (Пит 27.11): папки слева, список писем, область чтения. У письма — метка, как категория
-// в Outlook: что с ним сделал помощник или вы; под письмом — какие ответы по нему ушли.
+// Почта как в Outlook (Пит 27–28.11): папки слева, список «От / Тема / Получено», область чтения справа.
+// «Отсортированные / Другие» — как сработал фильтр помощника; метка у письма — что с ним сделано.
 const statusChip = st => st ? el("span", "status-chip status-" + st.kind, st.label) : null;
 
 const MAIL_FOLDERS = [["inbox", "Входящие"], ["sent", "Отправленные"], ["newsletter", "Рассылки"],
@@ -352,16 +352,39 @@ function folderOf(m) {
   return "inbox";
 }
 
+function initials(name) {
+  const words = (name || "?").replace(/[«»"]/g, "").split(/\s+/).filter(Boolean);
+  return ((words[0] || "?")[0] + (words.length > 1 ? words[1][0] : "")).toUpperCase();
+}
+
+function avatar(name) {
+  let h = 0;
+  for (const ch of name || "") h = (h * 31 + ch.charCodeAt(0)) % 360;
+  const a = el("span", "mail-avatar", initials(name));
+  a.style.background = `hsl(${h} 55% 85%)`;
+  return a;
+}
+
+function received(iso, today) {
+  if (!iso) return "";
+  const d = iso.slice(0, 10);
+  return d === today ? iso.slice(11, 16) : d.slice(8, 10) + "." + d.slice(5, 7) + "." + d.slice(0, 4);
+}
+
 function readingPane(m, letters, onBack) {
-  const addr = (name, email) => [name, email].filter(Boolean).join(" · ");
+  const addr = (name, email) => [name, email ? "<" + email + ">" : ""].filter(Boolean).join(" ");
   const replies = m.direction === "in" ? letters.filter(x => x.direction === "out" && x.reply_to === m.id) : [];
   const source = m.direction === "out" && m.reply_to ? letters.find(x => x.direction === "in" && x.id === m.reply_to) : null;
-  return el("article", "card t-card mail-read",
+  const who = m.direction === "out" ? (m.to_name || m.to_email) : m.from_name;
+  return el("article", "mail-read",
     onBack ? button("← К списку", onBack, "quiet back-link") : null,
     el("h2", "mail-read-subject", m.subject || "(без темы)"),
-    hint("От: " + addr(m.from_name, m.from_email)), hint("Кому: " + addr(m.to_name, m.to_email)),
-    hint(stamp(m.at)), statusChip(m.status),
-    el("p", "verbatim", m.body),
+    el("div", "mail-read-head", avatar(who),
+      el("div", "mail-read-from", el("strong", "", addr(m.from_name, m.from_email)),
+        hint("Кому: " + addr(m.to_name, m.to_email))),
+      el("small", "mail-read-date", stamp(m.at))),
+    m.status ? el("p", "mail-read-status", el("strong", "", "Что с письмом: "), statusChip(m.status)) : null,
+    el("div", "mail-read-body verbatim", m.body),
     m.reason ? hint("Почему так: " + m.reason) : null,
     source ? el("div", "mail-thread", el("h3", "", "В ответ на"),
       el("p", "", el("strong", "", source.from_name + ": "), source.subject)) : null,
@@ -373,45 +396,71 @@ function readingPane(m, letters, onBack) {
 function mailPage(host, folder = "") {
   if (!MAIL_FOLDERS.some(([k]) => k === folder)) folder = "inbox";
   load(host, async mount => {
-    const {letters, groups} = await api("/api/mail");
-    const folders = el("div", "mail-folders");
-    // Фильтр «Входящих» по собеседнику — как было: контрагенты, отделы (участники совещаний и другие).
+    const [{letters, groups}, td] = await Promise.all([api("/api/mail"), api("/api/today")]);
+    const today = td.day;
     const titles = Object.fromEntries((groups || []).map(g => [g.key, g.title]));
-    let who = "all";
-    const whoBar = el("div", "segmented mail-who");
-    const search = el("input");
-    search.type = "search";
-    search.placeholder = "Поиск: отправитель или тема";
-    search.setAttribute("aria-label", "Поиск по почте");
-    const list = el("div", "mail-list"), pane = el("div", "mail-pane");
-    let opened = null;
     const inFolder = f => letters.filter(m => folderOf(m) === f)
       .sort((a, b) => (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0));
-    folders.replaceChildren(...MAIL_FOLDERS.map(([key, name]) => {
-      const n = key === "style" ? null : inFolder(key).length;
-      return toggle(n === null ? name : name + " · " + n, key === folder, () => mailPage(host, key));
+    const youCount = inFolder("inbox").filter(m => m.status && m.status.kind === "you").length;
+    const side = el("nav", "mail-side");
+    side.setAttribute("aria-label", "Папки почты");
+    side.append(...MAIL_FOLDERS.map(([key, name]) => {
+      const n = key === "style" ? "" : key === "inbox" ? (youCount || "") : inFolder(key).length;
+      const b = button(el("span", "mail-folder", el("span", "", name), n !== "" ? el("small", "", String(n)) : null),
+        () => mailPage(host, key), "mail-folder-btn");
+      b.setAttribute("aria-pressed", String(key === folder));
+      return b;
     }));
+    const listCol = el("section", "mail-col"), pane = el("section", "mail-pane");
+    mount.replaceChildren(el("div", "mail-outlook" + (folder === "style" ? " mail-outlook--wide" : ""), side, listCol, pane));
     if (folder === "style") {
-      mount.replaceChildren(folders, pane);
+      listCol.remove();
       stylePage(pane);
       return;
     }
+    let tab = "focused", who = "all", opened = null;
+    const search = el("input");
+    search.type = "search";
+    search.placeholder = "Поиск";
+    search.setAttribute("aria-label", "Поиск по почте");
+    const filter = el("select");
+    filter.setAttribute("aria-label", "Фильтр");
+    for (const [k, name] of [["all", "Фильтр: все"], ["you", "Ждут вашего решения"],
+      ["counterparty", titles.counterparty || "Контрагенты"], ["team", titles.team || "Отделы: участники совещаний"],
+      ["internal", titles.internal || "Отделы: другие"]]) filter.append(new Option(name, k));
+    filter.addEventListener("change", () => { who = filter.value; render(); });
+    const tabs = el("div", "mail-tabs");
+    const list = el("div", "mail-list");
+    const head = el("div", "mail-head", el("span", ""), el("span", "", "От"), el("span", "", "Тема"), el("span", "", "Получено"));
+    const focused = m => m.direction === "out" || !m.status || m.status.kind !== "info";
     function open(m) {
       opened = m.id;
       list.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.id === m.id)));
-      pane.replaceChildren(readingPane(m, letters, phone.matches ? () => { pane.hidden = true; list.hidden = false; } : null));
-      if (phone.matches) { list.hidden = true; pane.hidden = false; window.scrollTo(0, 0); }
+      pane.replaceChildren(readingPane(m, letters, phone.matches ? () => { pane.hidden = true; listCol.hidden = false; } : null));
+      if (phone.matches) { listCol.hidden = true; pane.hidden = false; window.scrollTo(0, 0); }
     }
     function render() {
       const q = search.value.trim().toLowerCase();
-      const items = inFolder(folder).filter(m => who === "all" || m.group === who).filter(m => !q ||
-        [m.from_name, m.from_email, m.to_name, m.to_email, m.subject].join(" ").toLowerCase().includes(q));
+      const all = inFolder(folder);
+      const split = folder === "inbox";
+      tabs.replaceChildren(...(split ? [["focused", "Отсортированные"], ["other", "Другие"]].map(([k, name]) => {
+        const n = all.filter(m => (k === "focused") === focused(m)).length;
+        return toggle(name + " · " + n, tab === k, () => { tab = k; render(); });
+      }) : []));
+      const items = all
+        .filter(m => !split || (tab === "focused") === focused(m))
+        .filter(m => who === "all" || (who === "you" ? (m.status && m.status.kind === "you") : m.group === who))
+        .filter(m => !q || [m.from_name, m.from_email, m.to_name, m.to_email, m.subject, m.body].join(" ").toLowerCase().includes(q));
       list.replaceChildren(...(items.length ? items.map(m => {
-        const who = m.direction === "out" ? "→ " + (m.to_name || m.to_email) : m.from_name;
-        const b = button(el("span", "mail-row", el("span", "mail-row-top", el("strong", "", who),
-            el("small", "", stamp(m.at))), el("span", "mail-row-subject", m.subject || "(без темы)"),
-          el("span", "mail-row-preview", (m.body || "").split("\n")[0].slice(0, 90)), statusChip(m.status)),
-          () => open(m), "row-link");
+        const name = m.direction === "out" ? "→ " + (m.to_name || m.to_email) : m.from_name;
+        const mine = m.status && m.status.kind === "you";
+        const b = button(el("span", "mail-row" + (mine ? " mail-row--you" : ""),
+          avatar(m.direction === "out" ? (m.to_name || m.to_email) : m.from_name),
+          el("span", "mail-row-from", name),
+          el("span", "mail-row-subject", m.subject || "(без темы)"),
+          el("span", "mail-row-date", received(m.at, today)),
+          el("span", "mail-row-preview", (m.body || "").replace(/\s+/g, " ").slice(0, 140)),
+          el("span", "mail-row-tag", statusChip(m.status))), () => open(m), "mail-row-btn" + (mine ? " mail-row-btn--you" : ""));
         b.dataset.id = m.id;
         b.setAttribute("aria-pressed", String(m.id === opened));
         return b;
@@ -420,17 +469,8 @@ function mailPage(host, folder = "") {
       if (!items.length) pane.replaceChildren();
     }
     search.addEventListener("input", render);
-    if (folder === "inbox") {
-      const box = inFolder("inbox");
-      const keys = [["all", "Все"], ["counterparty", titles.counterparty || "Контрагенты"],
-        ["team", titles.team || "Отделы: участники совещаний"], ["internal", titles.internal || "Отделы: другие"]];
-      const draw = () => whoBar.replaceChildren(...keys.map(([k, name]) => toggle(
-        name + " · " + (k === "all" ? box.length : box.filter(m => m.group === k).length), k === who,
-        () => { who = k; draw(); render(); })));
-      draw();
-    }
     pane.hidden = phone.matches;
-    mount.replaceChildren(folders, el("div", "mail-layout", el("div", "card t-card mail-col", folder === "inbox" ? whoBar : null, search, list), pane));
+    listCol.replaceChildren(el("div", "mail-tools", search, filter), tabs, head, list);
     render();
   });
 }
@@ -1014,11 +1054,104 @@ function rulesPage(host) {
   });
 }
 
+// ---------------- Профиль → Метрики: живые круговые диаграммы (Пит 28.11) ----------------
+// Цвета проверены валидатором палитры (порядок фиксирован, цвет закреплён за долей); контраст с фоном ниже 3:1,
+// поэтому у каждой доли есть подпись с цифрой рядом с диаграммой.
+const SLICE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4"];
+const nf = (v, d = 1) => Number(v || 0).toLocaleString("ru-RU", {maximumFractionDigits: d});
+
+// Кольцо из долей. update(parts, center, sub) меняет те же дуги — переход анимирует CSS.
+function donut(label) {
+  const NS = document.documentElement.namespaceURI.replace("1999/xhtml", "2000/svg"), R = 52, C = 2 * Math.PI * R, GAP = 2;
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("viewBox", "0 0 140 140");
+  svg.setAttribute("role", "img");
+  svg.classList.add("donut");
+  const track = document.createElementNS(NS, "circle");
+  Object.entries({cx: 70, cy: 70, r: R, class: "donut-track"}).forEach(([k, v]) => track.setAttribute(k, v));
+  svg.append(track);
+  const big = document.createElementNS(NS, "text"), small = document.createElementNS(NS, "text");
+  big.setAttribute("x", 70); big.setAttribute("y", 70); big.setAttribute("class", "donut-big");
+  small.setAttribute("x", 70); small.setAttribute("y", 90); small.setAttribute("class", "donut-small");
+  const arcs = [], legend = el("div", "donut-legend"), tip = el("div", "donut-tip");
+  tip.hidden = true;
+  const box = el("div", "donut-box", el("div", "donut-wrap", svg, tip), legend);
+  function update(parts, center, sub) {
+    const total = parts.reduce((s, p) => s + p.value, 0);
+    let at = 0;
+    parts.forEach((p, i) => {
+      let a = arcs[i];
+      if (!a) {
+        a = document.createElementNS(NS, "circle");
+        Object.entries({cx: 70, cy: 70, r: R, class: "donut-arc", stroke: p.color || SLICE[i]})
+          .forEach(([k, v]) => a.setAttribute(k, v));
+        a.addEventListener("pointerenter", () => { tip.hidden = false; tip.textContent = a.dataset.tip; });
+        a.addEventListener("pointerleave", () => { tip.hidden = true; });
+        svg.insertBefore(a, big);
+        arcs[i] = a;
+      }
+      const len = total ? Math.max(0, p.value / total * C - (p.value && parts.filter(x => x.value).length > 1 ? GAP : 0)) : 0;
+      a.style.strokeDasharray = len + " " + C;
+      a.style.strokeDashoffset = String(-at);
+      a.dataset.tip = p.label + ": " + p.text;
+      at += total ? p.value / total * C : 0;
+    });
+    big.textContent = center;
+    small.textContent = sub || "";
+    svg.setAttribute("aria-label", label + ": " + parts.map(p => p.label + " " + p.text).join(", "));
+    legend.replaceChildren(...parts.map((p, i) => el("div", "donut-row",
+      el("span", "swatch"), el("span", "donut-name", p.label), el("strong", "", p.text))));
+    legend.querySelectorAll(".swatch").forEach((s, i) => { s.style.background = parts[i].color || SLICE[i]; });
+  }
+  return {node: box, update};
+}
+
+function metricsPage(host) {
+  const letters = donut("Куда ушли письма"), share = donut("Без вас"), hours = donut("Освобождено часов");
+  const tiles = el("div", "metrics");
+  const stamp_ = hint("");
+  host.replaceChildren(profileBack(),
+    el("div", "rules-head", el("h2", "", "Метрики помощника"),
+      el("p", "lead", "Сколько работы помощник забрал у вас. Цифры обновляются сами, как только он что-то делает."), stamp_),
+    el("div", "donuts",
+      card("Без вас", "check", el("p", "reason", "Доля писем, которые помощник решил без вашего участия."), share.node),
+      card("Куда ушли письма", "mail", el("p", "reason", "Что помощник сделал с каждым письмом."), letters.node),
+      card("Освобождённое время", "clock", el("p", "reason", "Часы, которые вы не потратили сами. Цель по заданию — 8–12 часов в неделю."), hours.node)),
+    tiles);
+  async function tick() {
+    if (!host.isConnected) return clearInterval(timer);
+    let m;
+    try { m = await api("/api/metrics"); } catch (e) { return; }
+    const pct = m.letters ? Math.round(100 * m.letters_without_leader / m.letters) : 0;
+    share.update([{label: "Без вас", value: m.letters_without_leader, text: nf(m.letters_without_leader, 0) + " писем"},
+                  {label: "Пришло к вам", value: m.letters - m.letters_without_leader, color: "#d3e0f2",
+                   text: nf(m.letters - m.letters_without_leader, 0) + " писем"}], pct + " %", "из " + m.letters + " писем");
+    letters.update(m.letters_by_action.map(p => ({label: p.label, value: p.value, text: nf(p.value, 0)})),
+      String(m.letters), "писем");
+    const left = Math.max(0, m.hours_goal - m.hours_saved);
+    hours.update([...m.hours_by_activity.filter(p => p.value).map(p => ({label: p.label, value: p.value, text: nf(p.value) + " ч"})),
+                  ...(left ? [{label: "До цели", value: left, color: "#d3e0f2", text: nf(left) + " ч"}] : [])],
+      nf(m.hours_saved) + " ч", "цель " + m.hours_goal + " ч");
+    tiles.replaceChildren(...[["file", "Встреча → протокол", m.protocol_minutes_to_draft == null ? "—" : nf(m.protocol_minutes_to_draft) + " мин"],
+      ["check", "До утверждения протокола", m.protocol_minutes_to_approved == null ? "—" : nf(m.protocol_minutes_to_approved) + " мин"],
+      ["edit", "Правок руководителя", nf(m.leader_edits, 0)], ["chart", "Расходы на модель", "$" + nf(m.llm_cost_usd, 2)]]
+      .map(([s, label, value]) => el("div", "metric", icon(s), el("strong", "", value), el("span", "", label))));
+    stamp_.textContent = "Обновлено в " + new Date().toLocaleTimeString("ru-RU", {hour: "2-digit", minute: "2-digit", second: "2-digit"});
+  }
+  const timer = setInterval(tick, 20000);
+  tick();
+}
+
 function profilePage(host, sub = "") {
   if (sub === "rules") return rulesPage(host);
+  if (sub === "metrics") return metricsPage(host);
   load(host, async mount => {
     const [p, metrics, journal, r] = await Promise.all([api("/api/profile"), api("/api/metrics"),
       api("/api/journal?limit=50"), api("/api/profile/rules")]);
+    const pct = metrics.letters ? Math.round(100 * metrics.letters_without_leader / metrics.letters) : 0;
+    const metricsTile = tile("#profile/metrics", "chart", "Метрики",
+      "Сколько работы помощник забрал у вас — круговые диаграммы, цифры обновляются сами.",
+      "Без вас · " + pct + " %", "Освобождено · " + nf(metrics.hours_saved) + " ч", "Правок · " + metrics.leader_edits);
     const profile = card(p.name, "profile", hint(p.title), el("h3", "", "Цели"), bullets(p.goals, "Цели не указаны."),
       el("h3", "", "Стиль общения"), el("p", "", p.style), el("h3", "", "Время плана"),
       el("p", "", "На день · " + p.plan_time), el("p", "", "На неделю · " + p.week_time));
@@ -1029,12 +1162,7 @@ function profilePage(host, sub = "") {
     const log = card("Журнал действий помощника", "clock", rows(journal.actions, a => el("div", "row",
       meta(stamp(a.at), {assistant: "Помощник", human: "Руководитель"}[a.actor] || a.actor),
       el("p", "", a.summary || readable(a.kind))), "Действий пока нет."));
-    mount.replaceChildren(metricCards(metrics.cards), el("div", "dashboard", stack(profile,
-      illus(card("Дополнительные метрики", "chart",
-        el("p", "", "Писем без руководителя · " + metrics.letters_without_leader),
-        el("p", "", "Доля писем без руководителя · " + (metrics.share_without_leader == null ? "—" :
-          (metrics.share_without_leader * 100).toLocaleString("ru-RU", {maximumFractionDigits: 2}) + " %")),
-        el("p", "", "До утверждения протокола, мин · " + (metrics.protocol_minutes_to_approved ?? "—"))), "chart")), rules), log);
+    mount.replaceChildren(el("div", "tiles", rules, metricsTile), el("div", "dashboard", profile, log));
   });
 }
 

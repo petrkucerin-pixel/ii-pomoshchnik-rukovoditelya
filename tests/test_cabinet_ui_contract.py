@@ -120,3 +120,11 @@ def test_profile_rules_is_a_big_button_with_its_own_page():
     assert "Правила по категориям" not in js                       # старый список кодов вида «p08» убран
     for word in ("Решаете только вы", "Передаю ответственному", "Если правила нет"):
         assert word in js + read("index.html") or word in (Path(__file__).resolve().parent.parent / "pomoshnik" / "cabinet.py").read_text(encoding="utf-8"), word
+
+
+def test_profile_metrics_is_a_tile_with_live_donuts():
+    """Пит 28.11: «Метрики — так же плашка. Провалимся и увидим круговые диаграммы, они меняются по мере новых цифр»."""
+    js, css = read("cabinet.js"), read("cabinet.css")
+    assert '"#profile/metrics"' in js and 'sub === "metrics"' in js
+    assert "function donut(" in js and "setInterval(tick" in js and "/api/metrics" in js
+    assert "transition: stroke-dasharray" in css                     # доли перетекают, а не перерисовываются скачком
