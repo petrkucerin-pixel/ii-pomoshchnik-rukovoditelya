@@ -472,7 +472,7 @@ function readingPane(m, letters, onBack, act) {
   const replies = m.direction === "in" ? letters.filter(x => x.direction === "out" && x.reply_to === m.id) : [];
   const source = m.direction === "out" && m.reply_to ? letters.find(x => x.direction === "in" && x.id === m.reply_to) : null;
   const who = m.direction === "out" ? (m.to_name || m.to_email) : m.from_name;
-  const mine = m.status && m.status.kind === "you";
+  const mine = m.direction === "in" && m.status && m.status.kind === "you";   // рамка — только у входящих
   const tools = act ? el("div", "mail-read-tools",
     m.direction === "in" && !m.deleted ? button("Ответить", () => act.reply(m), "primary") : null,
     m.deleted ? button("Восстановить", () => act.restore(m)) : button("Удалить", () => act.remove(m))) : null;
@@ -543,7 +543,7 @@ function mailPage(host, folder = "") {
     const tabs = el("div", "mail-tabs");
     const list = el("div", "mail-list");
     const head = el("div", "mail-head", el("span", ""), el("span", "", folder === "inbox" ? "От" : "Кому"),
-      el("span", "", "Тема"), el("span", "", "Получено"));
+      el("span", "", "Тема"), el("span", "", folder === "inbox" ? "Получено" : "Дата"));
     const focused = m => m.direction !== "in" || !m.status || m.status.kind !== "info";
     const back = () => { pane.hidden = true; listCol.hidden = false; };
     const showPane = node => {
@@ -593,7 +593,7 @@ function mailPage(host, folder = "") {
         .filter(m => !q || [m.from_name, m.from_email, m.to_name, m.to_email, m.subject, m.body].join(" ").toLowerCase().includes(q));
       list.replaceChildren(...(items.length ? items.map(m => {
         const name = m.direction === "in" ? m.from_name : "→ " + (m.to_name || m.to_email || "(без адреса)");
-        const mine = m.status && m.status.kind === "you";
+        const mine = m.direction === "in" && m.status && m.status.kind === "you";   // рамка — только у входящих
         const clip = m.attachments && m.attachments.length ? "📎 " : "";
         const b = button(el("span", "mail-row" + (mine ? " mail-row--you" : ""),
           avatar(m.direction === "in" ? m.from_name : (m.to_name || m.to_email || "?")),

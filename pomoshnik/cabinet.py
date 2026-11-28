@@ -158,7 +158,8 @@ SENT_LABELS = {"передача": ("assistant", "Помощник переда�
                "решение": ("you", "По вашему решению"), "протокол": ("you", "Протокол после вашего утверждения"),
                "приглашение": ("you", "Ваше приглашение на встречу"), "напоминание": ("you", "Напоминание по вашей кнопке"),
                "поручение": ("you", "Ваше поручение"), "ваше_письмо": ("you", "Вы написали"),
-               "из_почты": ("you", "Вы отправили из почты")}
+               "из_почты": ("you", "Вы отправили из почты"),
+               "уточнение": ("assistant", "Помощник: уточнил, что нужно")}
 
 
 def read_letters(a: Assistant) -> set[str]:
@@ -275,7 +276,8 @@ def mail(a: Assistant) -> dict:
         x.pop("event_id")
     for x in out:
         p = g.person(x["to_email"])
-        x["to_name"] = p.name if p else g.party_of_external(x["to_email"])
+        # Внешний получатель — имя из его писем, иначе адрес целиком (а не домен «yandex»).
+        x["to_name"] = p.name if p else (g.external_names.get(x["to_email"].lower()) or x["to_email"])
         x["group"], x["party"], x["party_note"] = g.classify(x["to_email"], g.external_names.get(
             x["to_email"].lower(), ""), "")
     letters = sorted(inc + out, key=lambda x: x["at"] or "")

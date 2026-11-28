@@ -749,3 +749,16 @@ def test_unclear_external_letter_is_clarified_by_assistant_then_reviewed(env):
     assert len(a.decisions) == queue + 1 and "так и не уточнил" in a.decisions[-1]["reason"]
     sent_clarify = [x for x in a.j.actions() if x["kind"] == "mail_sent" and x["payload"].get("kind") == "уточнение"]
     assert len(sent_clarify) == 1                                             # второй раз не переспрашивает
+
+
+def test_external_recipient_shown_by_name_or_address_not_domain(env):
+    from types import SimpleNamespace
+    c, a, _ = env
+    a.mail = ReplyBox([SimpleNamespace(id="ext-1", from_name="Кучерин Петр", from_email="pit@yandex.ru", to="",
+                                       subject="Привет", body="Добрый день, нужен КП", received=a.clock.now())])
+    a.process_inbox()
+    a.write_letter("pit@yandex.ru", "Re: Привет", "Здравствуйте")
+    a.write_letter("nobody@mail.example", "Тест", "x")
+    out = {x["to_email"]: x for x in c.get("/api/mail").json()["letters"] if x["direction"] == "out"}
+    assert out["pit@yandex.ru"]["to_name"] == "Кучерин Петр"
+    assert out["nobody@mail.example"]["to_name"] == "nobody@mail.example"
