@@ -1073,6 +1073,7 @@ function donut(label) {
   const big = document.createElementNS(NS, "text"), small = document.createElementNS(NS, "text");
   big.setAttribute("x", 70); big.setAttribute("y", 70); big.setAttribute("class", "donut-big");
   small.setAttribute("x", 70); small.setAttribute("y", 90); small.setAttribute("class", "donut-small");
+  svg.append(big, small);
   const arcs = [], legend = el("div", "donut-legend"), tip = el("div", "donut-tip");
   tip.hidden = true;
   const box = el("div", "donut-box", el("div", "donut-wrap", svg, tip), legend);
