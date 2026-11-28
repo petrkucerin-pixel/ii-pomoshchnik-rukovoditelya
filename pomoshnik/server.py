@@ -940,6 +940,14 @@ def api_profile():
     return cabinet.profile(stand.assistant)
 
 
+@app.get("/api/profile/journal")
+def api_profile_journal(who: str = "", group: str = ""):
+    if who not in ("", "human", "assistant") or (group and group not in cabinet.JOURNAL_GROUPS):
+        raise HTTPException(422, "неизвестный фильтр")
+    with stand.lock:
+        return cabinet.journal_feed(stand.assistant, who=who, group=group)
+
+
 @app.get("/api/profile/rules")
 def api_profile_rules():
     with stand.lock:

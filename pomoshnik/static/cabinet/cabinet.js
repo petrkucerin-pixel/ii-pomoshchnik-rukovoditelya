@@ -1144,8 +1144,32 @@ function metricsPage(host) {
   tick();
 }
 
+// Профиль → Журнал действий: что сделал помощник и что решили вы, по дням (Пит 28.11).
+function journalPage(host) {
+  let who = "", group = "";
+  const filters = el("div", "filters"), list = el("div");
+  host.replaceChildren(profileBack(),
+    el("div", "rules-head", el("h2", "", "Журнал действий"),
+      el("p", "lead", "Всё, что помощник сделал сам, и все ваши решения. Новые сверху; одинаковые действия подряд — одной строкой.")),
+    filters, list);
+  async function render() {
+    const d = await api("/api/profile/journal?" + new URLSearchParams({who, group}));
+    filters.replaceChildren(
+      el("div", "segmented", [["", "Все"], ["assistant", "Помощник · " + d.counts["Помощник"]], ["human", "Вы · " + d.counts["Вы"]]]
+        .map(([k, label]) => toggle(label, who === k, () => { who = k; render(); }))),
+      el("div", "segmented journal-groups", [["", "Все разделы"], ...d.groups.map(g => [g, g])]
+        .map(([k, label]) => toggle(label, group === k, () => { group = k; render(); }))));
+    list.replaceChildren(...(d.days.length ? d.days.map(day => card(day.label, "clock",
+      rows(day.items, x => el("div", "row journal-row" + (x.who === "Вы" ? " journal-mine" : ""),
+        meta(time(x.at), x.who, x.group),
+        el("p", "", x.text + (x.times > 1 ? "  ×" + x.times : ""))), ""))) : [hint("Записей нет.")]));
+  }
+  render();
+}
+
 function profilePage(host, sub = "") {
   if (sub === "rules") return rulesPage(host);
+  if (sub === "journal") return journalPage(host);
   if (sub === "metrics") return metricsPage(host);
   load(host, async mount => {
     const [p, metrics, journal, r] = await Promise.all([api("/api/profile"), api("/api/metrics"),
@@ -1161,10 +1185,11 @@ function profilePage(host, sub = "") {
       "Что решаете только вы, что помощник делает сам и кому передаёт.",
       "Только вы · " + r.summary.only_me, "Сам · " + r.summary.auto,
       "Без вас · " + r.summary.letters_without_you + " из " + r.summary.letters + " писем");
-    const log = card("Журнал действий помощника", "clock", rows(journal.actions, a => el("div", "row",
-      meta(stamp(a.at), {assistant: "Помощник", human: "Руководитель"}[a.actor] || a.actor),
-      el("p", "", a.summary || readable(a.kind))), "Действий пока нет."));
-    mount.replaceChildren(el("div", "tiles", rules, metricsTile), el("div", "dashboard", profile, log));
+    const last = journal.actions[0];
+    const log = tile("#profile/journal", "clock", "Журнал действий",
+      "Всё, что помощник сделал сам, и все ваши решения — по дням, обычными словами.",
+      last ? "Последнее · " + stamp(last.at) : "Записей пока нет");
+    mount.replaceChildren(el("div", "tiles", rules, metricsTile, log), profile);
   });
 }
 

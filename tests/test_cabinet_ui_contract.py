@@ -13,7 +13,7 @@ STATIC = Path(srv.__file__).resolve().parent / "static" / "cabinet"
 SECTIONS = {"today": "Сегодня", "mail": "Переписка", "meetings": "Совещания", "memory": "Память", "profile": "Профиль"}
 ENDPOINTS = ["/api/today", "/api/decisions/", "/api/mail", "/api/style", "/api/style/teach", "/api/style/rules/", "/api/meetings",
              "/api/meetings/transcript", "/api/protocols", "/approve", "/reject", "/edit", "/api/tasks", "/api/memory",
-             "/api/edits", "/api/profile", "/api/profile/rules", "/api/metrics", "/api/journal", "/lead"]
+             "/api/edits", "/api/profile", "/api/profile/rules", "/api/profile/journal", "/api/metrics", "/api/journal", "/lead"]
 
 
 def read(name):
@@ -128,3 +128,9 @@ def test_profile_metrics_is_a_tile_with_live_donuts():
     assert '"#profile/metrics"' in js and 'sub === "metrics"' in js
     assert "function donut(" in js and "setInterval(tick" in js and "/api/metrics" in js
     assert "transition: stroke-dasharray" in css                     # доли перетекают, а не перерисовываются скачком
+
+
+def test_profile_journal_is_a_tile_with_its_own_page():
+    """Пит 28.11: журнал действий — плитка, внутри по дням, фильтры «Помощник / Вы» и по разделам."""
+    js = read("cabinet.js")
+    assert '"#profile/journal"' in js and 'sub === "journal"' in js and "Журнал действий помощника" not in js

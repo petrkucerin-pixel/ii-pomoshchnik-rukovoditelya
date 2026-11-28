@@ -686,6 +686,125 @@ def readable_key(key: str) -> str:
     return t[:1].upper() + t[1:]
 
 
+# ---------------- Профиль → «Журнал действий» (Пит 28.11) ----------------
+JOURNAL_GROUPS = ["Почта и решения", "Встречи и аватар", "Протоколы и задачи", "Память и обучение", "Telegram"]
+_VERDICT = {"yes": "согласовали", "no": "отказали по", "later": "отложили"}
+_HIDDEN = {"inbox_done", "decision_prepared", "robot_live"}      # служебное: результат виден в других записях
+
+
+def _jgroup(kind: str) -> str:
+    if kind.startswith(("mail_", "letter_", "decision_", "delegation_", "queue_")):
+        return "Почта и решения"
+    if kind.startswith(("meeting", "avatar_", "robot_", "person_")):
+        return "Встречи и аватар"
+    if kind.startswith(("protocol", "task_")) or kind == "report_review":
+        return "Протоколы и задачи"
+    if kind.startswith(("memory_", "style_", "template_")):
+        return "Память и обучение"
+    return "Telegram"
+
+
+def _subject(summary: str) -> str:
+    return summary.split(" — ", 1)[0].strip()
+
+
+def _jtext(x: dict) -> str:
+    """Запись журнала — фраза «кто что сделал»."""
+    k, s, pl = x["kind"], x["summary"] or "", x["payload"] or {}
+    if k == "letter_decided":
+        verdict, _, subj = s.partition(": ")
+        return f"Вы {_VERDICT.get(verdict, verdict)} «{subj}»"
+    if k == "mail_спросить_руководителя":
+        subj, _, why = s.partition(" — ")
+        return f"Письмо «{subj}» — к вам на решение" + (f": {why}" if why else "")
+    if k == "mail_делегировать":
+        return f"Передал ответственному «{_subject(s)}»"
+    if k == "mail_авто":
+        return f"Ответил сам на «{_subject(s)}»"
+    if k == "mail_в_сводку":
+        return f"Прочитал «{_subject(s)}», положил в сводку"
+    if k == "mail_игнорировать":
+        return f"Пропустил «{_subject(s)}»"
+    if k == "mail_sent":
+        to, _, subj = s.partition(": ")
+        return f"Отправил письмо «{subj}» → {to}"
+    if k == "memory_saved":
+        return f"Запомнил из «{s.rsplit(': фактов', 1)[0]}»"
+    if k == "memory_decision":
+        return f"Записал в память ваше решение: {s}"
+    if k == "morning_plan":
+        return "Прислал утренний план в Telegram"
+    if k == "tg_block":
+        return f"Telegram: {s}"
+    if k == "protocol_draft":
+        return f"Собрал черновик протокола «{s.split(':', 1)[0]}»"
+    if k == "protocol_sent":
+        return f"Вы утвердили протокол «{s.split(':', 1)[0]}», помощник разослал его"
+    if k in ("protocol_edit", "decision_draft_edit"):
+        return f"Вы поправили: {s}"
+    if k == "protocol_rejected":
+        return "Вы отклонили протокол"
+    if k == "avatar_auto_done":
+        title, _, res = s.partition(": ")
+        return {"protocol": f"Встреча «{title}» с аватаром прошла, протокол готов",
+                "no_session": f"«{title}» прошла без аватара", "empty": f"«{title}»: разговора не было",
+                "no_link": f"«{title}»: нет ссылки на Телемост, аватар не ходил"}.get(res, s)
+    if k == "avatar_auto_error":
+        return f"Аватар не смог подключиться: {s}"
+    if k == "robot_started":
+        return f"Аватар зашёл в Телемост: {s.split(':', 1)[0]}"
+    if k == "robot_done":
+        return f"Аватар вышел со встречи: {s}"
+    if k == "meeting_lead":
+        return "Вы выбрали, кто ведёт встречу: " + s.split(": ", 1)[-1]
+    if k == "meeting_created":
+        return f"Вы назначили встречу «{s}»"
+    if k == "delegation_released":
+        verdict, _, subj = s.partition(": ")
+        return f"После вашего решения {'передал' if verdict == 'yes' else 'не стал передавать'} «{subj}»"
+    if k == "queue_rechecked":
+        return f"Пересмотрел очередь по новым правилам: {s}"
+    if k == "person_alias":
+        return f"Запомнил, кто есть кто: {s}"
+    return s or k.replace("_", " ")
+
+
+def journal_feed(a: Assistant, *, who: str = "", group: str = "", limit: int = 300) -> dict:
+    """Журнал для руководителя: по дням, новые сверху, копии одного действия подряд — одна строка с «×N»."""
+    acts = [x for x in a.j.actions() if x["kind"] not in _HIDDEN]
+    counts = {"Помощник": sum(x["actor"] != "human" for x in acts), "Вы": sum(x["actor"] == "human" for x in acts)}
+    rows: list[dict] = []
+    for x in acts:
+        item = {"at": x["at"].isoformat(), "who": "Вы" if x["actor"] == "human" else "Помощник",
+                "group": _jgroup(x["kind"]), "text": _jtext(x), "times": 1}
+        if who == "human" and item["who"] != "Вы" or who == "assistant" and item["who"] != "Помощник":
+            continue
+        if group and item["group"] != group:
+            continue
+        prev = rows[-1] if rows else None
+        if prev and (prev["who"], prev["text"]) == (item["who"], item["text"]) and prev["at"][:10] == item["at"][:10]:
+            prev["times"] += 1
+            prev["at"] = item["at"]
+            continue
+        rows.append(item)
+    rows = rows[-limit:][::-1]
+    days: dict[str, list] = {}
+    for r in rows:
+        days.setdefault(r["at"][:10], []).append(r)
+    return {"groups": JOURNAL_GROUPS, "counts": counts,
+            "days": [{"day": d, "label": _day_label(d, a), "items": items} for d, items in days.items()]}
+
+
+def _day_label(d: str, a: Assistant) -> str:
+    from datetime import date as _date
+    day, today = _date.fromisoformat(d), a.clock.now().date()
+    if day == today:
+        return "Сегодня"
+    if (today - day).days == 1:
+        return "Вчера"
+    return f"{day:%d.%m}, " + ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"][day.weekday()]
+
+
 def journal(a: Assistant, limit: int = 50) -> dict:
     acts = a.j.actions()[-max(1, min(limit, 500)):][::-1]
     return {"actions": [{"at": x["at"].isoformat(), "actor": x["actor"], "kind": x["kind"], "summary": x["summary"]}

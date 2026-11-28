@@ -495,3 +495,8 @@ select { width: 100%; min-height: 44px; padding: 9px 12px; border-radius: var(--
 .mail-tools select { width: 42%; flex: none; }
 .mail-side { scrollbar-width: none; }
 .mail-side::-webkit-scrollbar { display: none; }
+
+/* Профиль → Журнал действий (Пит 28.11) */
+.journal-groups { flex-wrap: wrap; }
+.journal-row p { margin: 4px 0 0; }
+.journal-mine { border-left: 3px solid var(--ink, #13407e); padding-left: 10px; }
