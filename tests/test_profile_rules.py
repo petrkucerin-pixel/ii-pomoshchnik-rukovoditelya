@@ -32,7 +32,8 @@ def test_metrics_have_parts_for_donuts_and_grow_with_new_mail(env):
     c, a, _ = env
     m = c.get("/api/metrics").json()
     parts = m["letters_by_action"]
-    assert [p["key"] for p in parts] == ["делегировать", "спросить_руководителя", "авто", "в_сводку", "игнорировать"]
+    assert [p["key"] for p in parts] == ["делегировать", "спросить_руководителя", "авто", "в_сводку", "игнорировать",
+                                         "уточнить"]
     assert sum(p["value"] for p in parts) == m["letters"]
     assert next(p for p in parts if p["key"] == "спросить_руководителя")["value"] == m["letters"] - m["letters_without_leader"]
     hours = m["hours_by_activity"]
@@ -51,3 +52,20 @@ def test_metrics_have_parts_for_donuts_and_grow_with_new_mail(env):
     assert again["letters"] == m["letters"] + 1                          # цифры живые: новое письмо — новая доля
     assert next(p for p in again["letters_by_action"] if p["key"] == "игнорировать")["value"] == \
         next(p for p in parts if p["key"] == "игнорировать")["value"] + 1
+
+
+
+def test_read_marks_do_not_change_routing_numbers(env):
+    """Почта ставит «прочитано» (mail_read) — это не решение по письму: доли и правила не меняются."""
+    c, a, _ = env
+    before = c.get("/api/metrics").json()
+    rules_before = c.get("/api/profile/rules").json()["summary"]
+    eid = next(x["event_id"] for x in a.j.actions() if x["kind"] == "mail_спросить_руководителя")
+    a.j.log_action("mail_read", actor="human", event_id=eid, payload={})
+    a.j.log_action("mail_уточнить", event_id=None, summary="Непонятное письмо — уточнить", payload={"category": "клиенты"})
+    after = c.get("/api/metrics").json()
+    assert after["letters_without_leader"] == before["letters_without_leader"] + 1          # только «уточнил»
+    assert after["letters"] == before["letters"] + 1
+    assert c.get("/api/profile/rules").json()["summary"]["letters_to_you"] == rules_before["letters_to_you"]
+    texts = [x["text"] for day in c.get("/api/profile/journal").json()["days"] for x in day["items"]]
+    assert any(t.startswith("Уточнил у отправителя") for t in texts) and not any("mail_read" in t for t in texts)

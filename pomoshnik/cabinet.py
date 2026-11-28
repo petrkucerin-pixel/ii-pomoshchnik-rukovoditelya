@@ -718,7 +718,7 @@ def card(a: Assistant) -> dict:
     team = [x for x in org.people if x.role == "подчинённый"] if org else []
     boss = next((x for x in org.people if x.role == "руководитель руководителя"), None) if org else None
     about = " ".join(filter(None, [                 # без повтора должности и целей — они ниже отдельно
-        f"В команде {len(team)} руководителей направлений: " + ", ".join(x.position[:1].lower() + x.position[1:]
+        f"В команде {len(team)} человек: " + ", ".join(x.position[:1].lower() + x.position[1:]
                                                                     for x in team) + "." if team else "",
         f"Подчиняется: {boss.name}, {boss.position[:1].lower() + boss.position[1:]}." if boss else ""]))
     base = {"name": p.name, "title": p.title, "about": about, "email": org.email_of(leader) if leader else "", "phone": "", "address": ""}
@@ -763,7 +763,7 @@ def staff(a: Assistant) -> dict:
         tasks_by.setdefault(t.owner, []).append(t)
     letters: dict[str, list] = {}
     for x in a.j.actions():
-        if x["kind"].startswith("mail_") and x["kind"] != "mail_sent" and x["event_id"]:
+        if x["kind"] in _ROUTES and x["event_id"]:
             ev = (a.j.event(x["event_id"]) or {}).get("payload") or {}
             letters.setdefault((ev.get("from") or "").lower(), []).append(ev.get("received") or "")
     def person(p):
@@ -849,7 +849,7 @@ def rules(a: Assistant) -> dict:
     p, org = a.p, a.p.org
     counts: dict[tuple[str, str], int] = {}
     for x in a.j.actions():
-        if x["kind"].startswith("mail_") and x["kind"] != "mail_sent":
+        if x["kind"] in _ROUTES:
             k = (x["kind"][5:], (x["payload"] or {}).get("category") or "")
             counts[k] = counts.get(k, 0) + 1
     to_me = {c: n for (act, c), n in counts.items() if act == "спросить_руководителя" for _ in [0]}
@@ -886,7 +886,8 @@ def readable_key(key: str) -> str:
 # ---------------- Профиль → «Журнал действий» (Пит 28.11) ----------------
 JOURNAL_GROUPS = ["Почта и решения", "Встречи и аватар", "Протоколы и задачи", "Память и обучение", "Telegram", "Прочее"]
 _VERDICT = {"yes": "согласовали", "no": "отказали по", "later": "отложили"}
-_HIDDEN = {"inbox_done", "decision_prepared", "robot_live", "tg_sent"}   # tg_sent — текст сообщений, виден в подробностях      # служебное: результат виден в других записях
+_HIDDEN = {"inbox_done", "decision_prepared", "robot_live", "tg_sent", "mail_read"}   # «прочитано» — состояние почты
+from .metrics import ROUTES as _ROUTES                                               # записи разбора письма   # tg_sent — текст сообщений, виден в подробностях      # служебное: результат виден в других записях
 
 
 def _jgroup(kind: str) -> str:
@@ -924,6 +925,8 @@ def _jtext(x: dict) -> str:
         return f"Прочитал «{_subject(s)}», положил в сводку"
     if k == "mail_игнорировать":
         return f"Пропустил «{_subject(s)}»"
+    if k == "mail_уточнить":
+        return f"Уточнил у отправителя, что нужно по «{_subject(s)}» — вас не звал"
     if k == "mail_sent":
         to, _, subj = s.partition(": ")
         return f"Отправил письмо «{subj}» → {to}"
