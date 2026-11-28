@@ -146,3 +146,13 @@ def test_service_notifications_are_never_forwarded_or_answered(ivan, email, cate
 def test_external_access_request_is_not_forwarded(ivan):
     d = decide(ivan, "доступы", "someone@partner.example")
     assert d.action != "делегировать"
+
+
+def test_auto_reply_only_to_own_staff(ivan):
+    """Стенд 28.11: «Дарова» с цитатой приглашения модель сочла «календарём» — внешнему ушло «Принято, подтверждаю»."""
+    assert decide(ivan, "календарь", "p04@company.example").action == "авто"
+    d = decide(ivan, "календарь", "pitpen72@yandex.ru")
+    assert d.action == "уточнить" and "своим сотрудникам" in d.reason      # не к руководителю — сначала уточнить
+    assert decide(ivan, "", "someone@outside.example").action == "уточнить"
+    assert decide(ivan, "", "p04@company.example").action == "спросить_руководителя"
+    assert decide(ivan, "деньги", "someone@outside.example").action == "спросить_руководителя"   # запреты — как были

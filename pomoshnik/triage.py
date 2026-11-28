@@ -71,6 +71,9 @@ def decide(profile: Profile, category: str, from_email: str, *, summary: str = "
         return Decision("спросить_руководителя", category, f"письмо от руководителя руководителя ({sender.name})",
                         summary=summary, confidence=confidence, sender_role=role)
     if not category:
+        if not sender:      # внешний и непонятно, о чём, — сначала уточнить у отправителя, не тратить время руководителя
+            return Decision("уточнить", "", "непонятно, что нужно внешнему отправителю — помощник уточнит сам",
+                            summary=summary, confidence=confidence, sender_role=role)
         return Decision("спросить_руководителя", "", "категорию определить не удалось", summary=summary,
                         confidence=confidence, sender_role=role)
     if confidence < MIN_CONFIDENCE:
@@ -81,6 +84,10 @@ def decide(profile: Profile, category: str, from_email: str, *, summary: str = "
         return Decision("спросить_руководителя", category, f"низкая уверенность разбора: {confidence:.2f}",
                         summary=summary, confidence=confidence, sender_role=role)
     rule = profile.action_for(category)
+    if rule.action == "авто" and not sender:
+        # Профиль: «подтверждение внутренних встреч». Внешнему (в т.ч. «Дарова» с цитатой приглашения) — не автоответ.
+        return Decision("уточнить", category, "автоответ только своим сотрудникам — у внешнего отправителя помощник "
+                        "сначала уточнит, что нужно", summary=summary, confidence=confidence, sender_role=role)
     if rule.action == "делегировать" and not rule.delegate_to:
         return Decision("спросить_руководителя", category, "некому делегировать по оргструктуре",
                         summary=summary, confidence=confidence, sender_role=role)

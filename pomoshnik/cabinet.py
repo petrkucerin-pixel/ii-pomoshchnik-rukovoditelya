@@ -103,6 +103,8 @@ def _letter_status(a: Assistant, act: dict | None, ap: dict, verdicts: dict, hel
         if "служебн" in reason:
             return {"kind": "info", "label": "Служебное уведомление — никому не пересылал"}
         return {"kind": "info", "label": "Прочитал — в сводке"}
+    if kind == "уточнить":
+        return {"kind": "done", "label": "Спросил отправителя, что нужно — ждём ответ"}
     if kind == "игнорировать":
         return {"kind": "info", "label": "Пропущено: спам" if ap.get("category") == "спам" else "Пропущено: рассылка"}
     return {"kind": "info", "label": "Разобрано"}
@@ -128,7 +130,7 @@ def _incoming(a: Assistant) -> list[dict]:
     deferred = {eid: datetime.fromisoformat(g["deferred_until"]) for g in a.groups() if g.get("deferred_until")
                 and datetime.fromisoformat(g["deferred_until"]) > now for eid in g["event_ids"]}
     out = []
-    gone = deleted_letters(a)
+    gone, seen = deleted_letters(a), read_letters(a)
     for r in rows:
         pl = json.loads(r["payload"])
         act = acts.get(r["id"])
@@ -144,6 +146,8 @@ def _incoming(a: Assistant) -> list[dict]:
                     "status": _letter_status(a, act, ap, verdicts, held, released, deferred),
                     "deleted": r["external_id"] in gone, "attachments": pl.get("attachments") or [],
                     "arrived": _iso(from_db(r["received_at"], a.j.tz)), "seq": r["id"]})
+        # Непрочитанное — только то, что ждёт руководителя и ещё не открыто: остальное помощник уже сделал сам.
+        out[-1]["read"] = out[-1]["status"]["kind"] not in ("you", "wait") or r["external_id"] in seen
     return out
 
 
@@ -155,6 +159,11 @@ SENT_LABELS = {"передача": ("assistant", "Помощник переда�
                "приглашение": ("you", "Ваше приглашение на встречу"), "напоминание": ("you", "Напоминание по вашей кнопке"),
                "поручение": ("you", "Ваше поручение"), "ваше_письмо": ("you", "Вы написали"),
                "из_почты": ("you", "Вы отправили из почты")}
+
+
+def read_letters(a: Assistant) -> set[str]:
+    """Письма, которые руководитель открыл в кабинете."""
+    return {x["payload"]["id"] for x in a.j.actions() if x["kind"] == "mail_read"}
 
 
 def deleted_letters(a: Assistant) -> set[str]:

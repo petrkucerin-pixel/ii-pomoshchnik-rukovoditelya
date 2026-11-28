@@ -31,7 +31,10 @@ from .writer import StyleBook, audience_of
 
 # Сколько минут руководителя экономит одно действие помощника. Допущения для метрики «освобождённые часы».
 DEFER = timedelta(hours=2)        # «Позже»: вопрос скрыт столько времени, потом возвращается
-MINUTES_SAVED = {"авто": 3, "делегировать": 5, "в_сводку": 2, "игнорировать": 1, "спросить_руководителя": 2}
+MINUTES_SAVED = {"авто": 3, "делегировать": 5, "в_сводку": 2, "игнорировать": 1, "спросить_руководителя": 2,
+                 "уточнить": 3}
+CLARIFY_TEXT = ("Здравствуйте! Я ИИ-помощник {leader}. Уточните, пожалуйста, по какому вопросу вы пишете и что "
+                "нужно — отвечу сам или передам нужному человеку.")
 PROTOCOL_MINUTES_SAVED = 30
 # Письма без фактов для памяти: на них не тратим вызов модели.
 MEMORY_SKIP = {"", "рассылка", "приглашение", "доступы", "календарь", "спам"}   # спам не запоминаем (28.11)
@@ -396,7 +399,12 @@ class Assistant:
             d = self._not_spam_if_known(d, e.from_email)
             rec = getattr(e, "received", None) or self.clock.now()
             asked = self._asked_subject(e)
-            if asked:                            # ответ исполнителя на вопрос помощника о задаче — узнаёт код
+            if self._clarified(e):
+                # Ответ на «уточните, что нужно»: разбор по обычным правилам; снова непонятно — к руководителю.
+                if d.action == "уточнить":
+                    d = Decision("спросить_руководителя", d.category, "отправитель так и не уточнил, что нужно — "
+                                 "решаете вы", summary=d.summary, confidence=d.confidence, sender_role=d.sender_role)
+            elif asked:                          # ответ исполнителя на вопрос помощника о задаче — узнаёт код
                 d = Decision("в_сводку", cat or "статус", "ответ исполнителя на вопрос помощника о задаче",
                              summary=summ or e.subject, confidence=conf, sender_role=d.sender_role)
                 self._remember_answer(e, asked, rec, eid)
@@ -415,13 +423,25 @@ class Assistant:
             counts["ревизор"] = self.review_reports()
         return counts
 
+    def _clarified(self, e) -> bool:
+        """Помощник уже спрашивал этого отправителя «уточните, что нужно» по этой теме."""
+        frm = (e.from_email or "").lower()
+        base = re.sub(r"^((re|fwd?|ответ)\s*:\s*)+", "", (e.subject or "").strip(), flags=re.I).strip().lower()
+        for a in self.j.actions():
+            pl = a["payload"] or {}
+            if a["kind"] == "mail_sent" and pl.get("kind") == "уточнение" and (pl.get("to") or "").lower() == frm:
+                sent = re.sub(r"^((re|fwd?|ответ)\s*:\s*)+", "", pl.get("subject") or "", flags=re.I).strip().lower()
+                if sent == base:
+                    return True
+        return False
+
     def _asked_subject(self, e) -> str:
         """Тема вопроса помощника, на который это письмо отвечает: тот же исполнитель и «Re: <тема вопроса>»."""
         subj = re.sub(r"^((re|fwd?|ответ)\s*:\s*)+", "", (e.subject or "").strip(), flags=re.I).strip().lower()
         frm = (e.from_email or "").lower()
         for a in self.j.actions():
             pl = a["payload"] or {}
-            if a["kind"] == "mail_sent" and pl.get("kind") in ("выяснение", "напоминание") \
+            if a["kind"] == "mail_sent" and pl.get("kind") in ("выяснение", "напоминание", "уточнение") \
                     and (pl.get("to") or "").lower() == frm and (pl.get("subject") or "").lower() == subj:
                 return pl["subject"]
         return ""
@@ -532,6 +552,23 @@ class Assistant:
             self.digest.append(f"Подтверждено автоматически: {e.subject}")
         elif d.action == "в_сводку":
             self.digest.append(f"{e.from_name}: {d.summary or e.subject}")
+        elif d.action == "уточнить":
+            if self._clarified(e):           # уже спрашивали — не переспрашиваем по кругу
+                self._log("mail_спросить_руководителя", path="decision", event_id=eid,
+                          summary=f"{e.subject} — отправитель так и не уточнил",
+                          payload={**payload, "reason": "отправитель так и не уточнил, что нужно — решаете вы"})
+                self.decisions.append({"event_id": eid, "at": (getattr(e, "received", None) or self.clock.now()).isoformat(),
+                                       "from": e.from_name, "subject": e.subject, "category": d.category,
+                                       "summary": d.summary, "reason": "отправитель так и не уточнил, что нужно",
+                                       "email": e.from_email, "id": e.id})
+                return
+            subject = e.subject if e.subject.lower().startswith("re:") else f"Re: {e.subject}"
+            body = CLARIFY_TEXT.format(leader=os.environ.get("LEADER_NAME_GENITIVE") or self.p.name)
+            mid = self.send_mail.send(e.from_email, subject, f"{body}\n\n{self.signature}", in_reply_to=e.id)
+            self._log("mail_sent", path="now", event_id=eid, summary=f"{e.from_email}: {subject}",
+                      payload={"to": e.from_email, "subject": subject, "body": f"{body}\n\n{self.signature}",
+                               "in_reply_to": e.id, "kind": "уточнение", "template": "", "message_id": mid})
+            self.digest.append(f"Спросил, что нужно: {e.from_name} — {e.subject}")
 
     def _forward(self, e, delegate_to: str, eid: int, note: str = ""):
         who = self.p.org.by_id[delegate_to]
@@ -580,8 +617,8 @@ class Assistant:
             return d
         if (from_email or "").strip().lower() not in self._correspondents():
             return d
-        return Decision("спросить_руководителя", "", "ответ от адреса, которому вы писали, — спамом не считаю, "
-                        "решаете вы", summary=d.summary, confidence=d.confidence, sender_role=d.sender_role)
+        return Decision("уточнить", "", "ответ от адреса, которому вы писали, — спамом не считаю; непонятно, что "
+                        "нужно, — помощник уточнит", summary=d.summary, confidence=d.confidence, sender_role=d.sender_role)
 
     def rescue_known_spam(self) -> int:
         """Письма, скрытые как спам, хотя мы писали этому адресу, — возвращаются руководителю. Повтор — без изменений."""

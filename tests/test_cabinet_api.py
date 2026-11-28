@@ -684,7 +684,7 @@ def test_reply_from_address_we_wrote_to_is_never_spam(env):
                                        subject="Re: Приглашение: Планёрка", received=a.clock.now())])
     a.process_inbox()
     m = next(x for x in c.get("/api/mail").json()["letters"] if x["id"] == "re-pit")
-    assert m["action"] == "спросить_руководителя" and "спамом не считаю" in m["reason"]
+    assert m["action"] == "уточнить" and "спамом не считаю" in m["reason"]
 
 
 def test_rescue_returns_known_letters_hidden_as_spam(env):
@@ -707,3 +707,45 @@ def test_incoming_letters_know_when_they_arrived(env):
     assert all(x["arrived"] and x["seq"] for x in inc)
     last = max(inc, key=lambda x: x["seq"])
     assert last["arrived"] >= min(x["arrived"] for x in inc)
+
+
+def test_opened_letter_is_read_and_unread_counts_only_waiting(env):
+    c, a, _ = env
+    inc = lambda: {x["id"]: x for x in c.get("/api/mail").json()["letters"] if x["direction"] == "in"}
+    letters_ = inc()
+    waiting = [x for x in letters_.values() if x["status"]["kind"] == "you"]
+    assert waiting and all(not x["read"] for x in waiting)
+    assert all(x["read"] for x in letters_.values() if x["status"]["kind"] not in ("you", "wait"))
+    c.post(f"/api/mail/{waiting[0]['id']}/read")
+    assert inc()[waiting[0]["id"]]["read"] and inc()[waiting[0]["id"]]["status"]["kind"] == "you"   # рамка остаётся
+
+
+def test_refresh_checks_mailbox_now(env):
+    c, _, _ = env
+    r = c.post("/api/mail/refresh")
+    assert r.status_code == 200 and "из_отправленных" in r.json()["counts"]
+
+
+
+def test_unclear_external_letter_is_clarified_by_assistant_then_reviewed(env):
+    from types import SimpleNamespace
+    c, a, _ = env
+    unclear = lambda s, u: ({"category": "", "summary": "?", "confidence": 0.9} if "разбираешь входящее" in s
+                            else answer(s, u))
+    a.llm = StubLLM(unclear)
+    queue = len(a.decisions)
+    hi = SimpleNamespace(id="hi-1", from_name="Pit", from_email="pit@yandex.ru", to="", subject="Привет", body="Дарова",
+                         received=a.clock.now())
+    a.mail = ReplyBox([hi])
+    a.process_inbox()
+    assert len(a.decisions) == queue                                         # руководителя не дёргаем
+    asked = [x for x in c.get("/api/mail").json()["letters"] if x["direction"] == "out"][-1]
+    assert asked["to_email"] == "pit@yandex.ru" and "Уточните" in asked["body"] and asked["subject"] == "Re: Привет"
+    st = next(x for x in c.get("/api/mail").json()["letters"] if x["id"] == "hi-1")["status"]
+    assert st["kind"] == "done" and "ждём ответ" in st["label"]
+    a.mail = ReplyBox([SimpleNamespace(id="hi-2", from_name="Pit", from_email="pit@yandex.ru", to="",
+                                       subject="Re: Привет", body="Да просто так", received=a.clock.now())])
+    a.process_inbox()                                                         # снова непонятно — уже к руководителю
+    assert len(a.decisions) == queue + 1 and "так и не уточнил" in a.decisions[-1]["reason"]
+    sent_clarify = [x for x in a.j.actions() if x["kind"] == "mail_sent" and x["payload"].get("kind") == "уточнение"]
+    assert len(sent_clarify) == 1                                             # второй раз не переспрашивает

@@ -226,8 +226,8 @@ class Stand:
         return counts
 
     def start_mail(self):
-        """Почта сама раз в MAIL_POLL_SECONDS (по умолчанию минута): руководитель видит письма без команд."""
-        every = int(os.environ.get("MAIL_POLL_SECONDS", "60") or 0)
+        """Почта сама раз в MAIL_POLL_SECONDS (по умолчанию 20 с), плюс кнопка «Обновить» в кабинете."""
+        every = int(os.environ.get("MAIL_POLL_SECONDS", "20") or 0)
         if every <= 0:
             self.status["mail"] = "выключено"
             return
@@ -947,15 +947,21 @@ def api_mail_send(x: LetterIn):
 
 
 @app.post("/api/mail/{letter_id}/{action}")
-def api_mail_action(letter_id: str, action: Literal["delete", "restore"]):
-    """Удалить письмо в кабинете (папка «Удалённые») или вернуть. Настоящий почтовый ящик не меняется."""
+def api_mail_action(letter_id: str, action: Literal["delete", "restore", "read"]):
+    """Удалить письмо в кабинете (папка «Удалённые»), вернуть или отметить прочитанным. Ящик не меняется."""
     with stand.lock:
         a = stand.assistant
         if not _letter_exists(a, letter_id):
             raise HTTPException(404, "такого письма нет")
-        a.j.log_action("mail_deleted" if action == "delete" else "mail_restored", actor="human", path="now",
-                       summary=letter_id, payload={"id": letter_id})
+        kind = {"delete": "mail_deleted", "restore": "mail_restored", "read": "mail_read"}[action]
+        a.j.log_action(kind, actor="human", path="now", summary=letter_id, payload={"id": letter_id})
     return {"ok": True}
+
+
+@app.post("/api/mail/refresh")
+def api_mail_refresh():
+    """Проверить ящик сейчас — кнопка «Обновить»."""
+    return {"ok": True, "counts": stand.poll_mail()}
 
 
 @app.get("/api/templates")

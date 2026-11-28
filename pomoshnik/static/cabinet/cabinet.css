@@ -539,3 +539,9 @@ select { width: 100%; min-height: 44px; padding: 9px 12px; border-radius: var(--
 .avatar-face img { width: 100%; height: 100%; object-fit: cover; }
 .avatar-current { outline: 3px solid var(--ink, #13407e); outline-offset: -3px; }
 
+.mail-new { display: flex; gap: 6px; }
+.mail-new button:first-child { flex: 1; width: auto; }
+.mail-new button + button { width: auto; flex: none; }
+.mail-row-btn--unread .mail-row-from, .mail-row-btn--unread .mail-row-subject, .mail-row-btn--unread .mail-row-date { font-weight: 700; color: var(--ink); }
+.mail-row--you .mail-row-from, .mail-row--you .mail-row-subject, .mail-row--you .mail-row-date { font-weight: 400; }
+.mail-row-btn--unread .mail-row--you .mail-row-from, .mail-row-btn--unread .mail-row--you .mail-row-subject { font-weight: 700; }

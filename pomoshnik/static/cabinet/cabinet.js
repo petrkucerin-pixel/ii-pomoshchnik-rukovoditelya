@@ -509,7 +509,8 @@ function mailPage(host, folder = "") {
     const fresh = m => Date.parse(m.arrived || m.at) || 0;
     const inFolder = f => (f === "drafts" ? draftRows : letters.filter(m => folderOf(m) === f))
       .sort((a, b) => fresh(b) - fresh(a) || (b.seq || 0) - (a.seq || 0) || (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0));
-    const youCount = inFolder("inbox").filter(m => m.status && m.status.kind === "you").length;
+    const unread = () => inFolder("inbox").filter(m => m.direction === "in" && !m.read).length;
+    const youCount = unread();
     const side = el("div", "mail-side");
     side.setAttribute("role", "navigation");
     side.setAttribute("aria-label", "Папки почты");
@@ -517,6 +518,7 @@ function mailPage(host, folder = "") {
       const n = key === "style" ? "" : key === "inbox" ? (youCount || "") : inFolder(key).length;
       const b = button(el("span", "mail-folder", el("span", "", name), n !== "" ? el("small", "", String(n)) : null),
         () => mailPage(host, key), "mail-folder-btn");
+      b.dataset.folder = key;
       b.setAttribute("aria-pressed", String(key === folder));
       return b;
     }));
@@ -549,7 +551,7 @@ function mailPage(host, folder = "") {
       if (phone.matches) { listCol.hidden = true; pane.hidden = false; window.scrollTo(0, 0); }
     };
     const compose = init => showPane(composeForm(book.contacts, {...init, leader: td.leader},
-      next => mailPage(host, next || folder),
+      next => api("/api/mail/refresh", "POST").catch(() => {}).then(() => mailPage(host, next || folder)),
       () => (opened && folder !== "drafts" ? open(letters.find(x => x.id === opened)) : (phone.matches ? back() : pane.replaceChildren()))));
     const act = {
       reply: m => compose({to: m.from_email, reply_to: m.id,
@@ -567,6 +569,15 @@ function mailPage(host, folder = "") {
         return;
       }
       showPane(readingPane(m, letters, phone.matches ? back : null, act));
+      if (m.direction === "in" && !m.read) {        // открыл — прочитано: счётчик «Входящих» уменьшается
+        m.read = true;
+        api("/api/mail/" + encodeURIComponent(m.id) + "/read", "POST").catch(() => {});
+        const row = list.querySelector(`[data-id="${CSS.escape(m.id)}"]`);
+        if (row) row.classList.remove("mail-row-btn--unread");
+        const badge = side.querySelector("[data-folder=inbox] small");
+        const n = unread();
+        if (badge) badge.textContent = n ? String(n) : "";
+      }
     }
     function render() {
       const q = search.value.trim().toLowerCase();
@@ -591,7 +602,7 @@ function mailPage(host, folder = "") {
           el("span", "mail-row-date", received(m.at, today)),
           el("span", "mail-row-preview", (m.body || "").replace(/\s+/g, " ").slice(0, 140)),
           el("span", "mail-row-tag", m.draft ? el("span", "status-chip status-info", "Черновик") : statusChip(m.status))),
-          () => open(m), "mail-row-btn" + (mine ? " mail-row-btn--you" : ""));
+          () => open(m), "mail-row-btn" + (mine ? " mail-row-btn--you" : "") + (m.direction === "in" && !m.read ? " mail-row-btn--unread" : ""));
         b.dataset.id = m.id;
         b.setAttribute("aria-pressed", String(m.id === opened));
         return b;
@@ -601,7 +612,12 @@ function mailPage(host, folder = "") {
     }
     search.addEventListener("input", render);
     pane.hidden = phone.matches;
-    listCol.replaceChildren(el("div", "mail-new", button("Новое сообщение", () => compose({}), "primary")),
+    const refresh = button("Обновить", () => submitAction(refresh.parentNode, el("p"), async () => {
+      await api("/api/mail/refresh", "POST");
+      mailPage(host, folder);
+    }));
+    refresh.setAttribute("aria-label", "Проверить почту сейчас");
+    listCol.replaceChildren(el("div", "mail-new", button("Новое сообщение", () => compose({}), "primary"), refresh),
       el("div", "mail-tools", search, filter), tabs, head, list);
     render();
   });
