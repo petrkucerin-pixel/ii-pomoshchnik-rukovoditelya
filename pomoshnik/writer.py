@@ -33,7 +33,7 @@ MAX_LEN = 900
 
 # Виды писем. «*» — правило для всех писем.
 KINDS = {"*": "Все письма", "auto_reply": "Автоответ", "delegate": "Передача исполнителю",
-         "decision": "Ответ по решению руководителя", "invite": "Приглашение на встречу",
+         "decision": "Ответ по решению руководителя", "reply": "Ответ на письмо", "invite": "Приглашение на встречу",
          "task_go": "Можно начинать", "review_question": "Вопрос ревизора", "protocol_mail": "Рассылка протокола",
          "assign": "Поручение"}
 KIND_OF = {"decision_yes": "decision", "decision_no": "decision"}      # шаблон → вид письма
@@ -175,7 +175,8 @@ class StyleBook:
         Правило — для вида «ответ по решению» и для адресата письма (по оргструктуре)."""
         acts = self.j.actions()
         done = {a["payload"].get("edit_id") for a in acts if a["kind"] == "style_learned"}
-        todo = [a for a in acts if a["kind"] == "decision_draft_edit" and a["id"] not in done]
+        # правки черновиков: в карточке решения — вид «ответ по решению», в почте — «ответ на письмо»
+        todo = [a for a in acts if a["kind"] in ("decision_draft_edit", "reply_draft_edit") and a["id"] not in done]
         added, n = False, 0
         for a in todo:
             draft, text = a["payload"].get("draft", ""), a["payload"].get("text", "")
@@ -186,9 +187,12 @@ class StyleBook:
                 break
             rule = str(rule).strip() if rule else ""
             if rule:
-                ev = self.j.event(a["event_id"]) if a.get("event_id") else None
-                to = ((ev or {}).get("payload") or {}).get("from", "")
-                self._add(rule, "ваша правка", actor="assistant", kind="decision",
+                if a["kind"] == "reply_draft_edit":
+                    kind, to = "reply", a["payload"].get("to", "")
+                else:
+                    ev = self.j.event(a["event_id"]) if a.get("event_id") else None
+                    kind, to = "decision", ((ev or {}).get("payload") or {}).get("from", "")
+                self._add(rule, "ваша правка", actor="assistant", kind=kind,
                           audience=audience_of(self.org, to) if to else "*", example={"draft": draft, "text": text})
                 added = True
             self.j.log_action("style_learned", path="style", summary=rule or "правка про факты, не про стиль",

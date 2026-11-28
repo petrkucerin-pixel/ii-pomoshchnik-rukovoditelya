@@ -186,3 +186,20 @@ def test_learned_rule_belongs_to_decision_kind_and_recipient(env, tmp_path):
     b.learn_pending()
     r = b.rules()[0]
     assert (r["kind"], r["audience"], r["source"]) == ("decision", "руководство", "ваша правка")
+
+
+# ---------------- «Ответ на письмо» из почты (соседняя сессия, 28.11) ----------------
+def test_reply_kind_and_learning_from_mail_reply_edits(env):
+    j, t = env
+    b = StyleBook(gen(SHORT), j, t, style=STYLE, org=ORG)
+    from pomoshnik.writer import KINDS
+    assert KINDS["reply"] == "Ответ на письмо"
+    j.log_action("reply_draft_edit", actor="human", path="now",
+                 payload={"to": "p09@company.example", "draft": "Подтверждаю.", "text": "Виктор Андреевич, спасибо, получил.",
+                          "letter_id": "m076"})
+    assert b.learn_pending() == 1 and b.learn_pending() == 0
+    r = b.rules()[0]
+    assert (r["kind"], r["audience"], r["source"]) == ("reply", "руководство", "ваша правка")
+    assert b.rules_text("reply", "руководство") and not b.rules_text("reply", "внешний")
+    assert not b.rules_text("decision", "руководство")                     # правки ответов из почты — только ответам
+    assert any(k["key"] == "reply" for k in b.overview()["kinds"])
