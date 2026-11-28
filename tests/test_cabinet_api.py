@@ -672,3 +672,38 @@ def test_poll_mail_once_runs_inbox_and_sent(env):
     c, a, _ = env
     res = srv.stand.poll_mail()
     assert "из_отправленных" in res
+
+
+def test_reply_from_address_we_wrote_to_is_never_spam(env):
+    from types import SimpleNamespace
+    c, a, _ = env
+    a.write_letter("pit@yandex.ru", "Приглашение: Планёрка", "Приглашаю.")
+    spam = lambda s, u: {"category": "спам", "summary": "?", "confidence": 0.9} if "разбираешь входящее" in s else answer(s, u)
+    a.llm = StubLLM(spam)
+    a.mail = ReplyBox([SimpleNamespace(id="re-pit", from_name="Pit", from_email="pit@yandex.ru", to="", body="Буду.",
+                                       subject="Re: Приглашение: Планёрка", received=a.clock.now())])
+    a.process_inbox()
+    m = next(x for x in c.get("/api/mail").json()["letters"] if x["id"] == "re-pit")
+    assert m["action"] == "спросить_руководителя" and "спамом не считаю" in m["reason"]
+
+
+def test_rescue_returns_known_letters_hidden_as_spam(env):
+    from types import SimpleNamespace
+    c, a, _ = env
+    a.llm = StubLLM(lambda s, u: {"category": "спам", "summary": "?", "confidence": 0.9} if "разбираешь входящее" in s
+                    else answer(s, u))
+    a.mail = ReplyBox([SimpleNamespace(id="old-pit", from_name="Pit", from_email="pit2@yandex.ru", to="", body="Ок.",
+                                       subject="Re: тест", received=a.clock.now())])
+    a.process_inbox()                                                 # тогда мы ему ещё не писали — спам
+    assert next(x for x in c.get("/api/mail").json()["letters"] if x["id"] == "old-pit")["action"] == "игнорировать"
+    a.write_letter("pit2@yandex.ru", "тест", "привет")
+    assert a.rescue_known_spam() == 1 and a.rescue_known_spam() == 0
+    assert next(x for x in c.get("/api/mail").json()["letters"] if x["id"] == "old-pit")["action"] == "спросить_руководителя"
+
+
+def test_incoming_letters_know_when_they_arrived(env):
+    c, a, _ = env
+    inc = [x for x in c.get("/api/mail").json()["letters"] if x["direction"] == "in"]
+    assert all(x["arrived"] and x["seq"] for x in inc)
+    last = max(inc, key=lambda x: x["seq"])
+    assert last["arrived"] >= min(x["arrived"] for x in inc)

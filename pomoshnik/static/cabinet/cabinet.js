@@ -505,8 +505,10 @@ function mailPage(host, folder = "") {
     const titles = Object.fromEntries((groups || []).map(g => [g.key, g.title]));
     const draftRows = drafts.map(d => ({id: d.draft_id, direction: "draft", at: d.at, to_name: "", to_email: d.to,
       from_name: "", subject: d.subject, body: d.body, draft: d}));
+    // Новые сверху — по времени, когда письмо пришло в кабинет (учебные письма заказчика датированы «будущим» декабрём).
+    const fresh = m => Date.parse(m.arrived || m.at) || 0;
     const inFolder = f => (f === "drafts" ? draftRows : letters.filter(m => folderOf(m) === f))
-      .sort((a, b) => (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0));
+      .sort((a, b) => fresh(b) - fresh(a) || (b.seq || 0) - (a.seq || 0) || (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0));
     const youCount = inFolder("inbox").filter(m => m.status && m.status.kind === "you").length;
     const side = el("div", "mail-side");
     side.setAttribute("role", "navigation");

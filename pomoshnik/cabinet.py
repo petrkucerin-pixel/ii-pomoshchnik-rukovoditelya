@@ -109,7 +109,7 @@ def _letter_status(a: Assistant, act: dict | None, ap: dict, verdicts: dict, hel
 
 
 def _incoming(a: Assistant) -> list[dict]:
-    rows = a.j.conn.execute("SELECT id, external_id, payload FROM events WHERE channel = 'mail' ORDER BY id").fetchall()
+    rows = a.j.conn.execute("SELECT id, external_id, received_at, payload FROM events WHERE channel = 'mail' ORDER BY id").fetchall()
     acts: dict[int, dict] = {}
     verdicts: dict[int, str] = {}
     held: set[int] = set()
@@ -142,7 +142,8 @@ def _incoming(a: Assistant) -> list[dict]:
                     "category": ap.get("category", ""), "action": act["kind"].removeprefix("mail_") if act else None,
                     "reason": ap.get("reason") or (act["summary"].removeprefix(subject + " — ") if act else ""),
                     "status": _letter_status(a, act, ap, verdicts, held, released, deferred),
-                    "deleted": r["external_id"] in gone, "attachments": pl.get("attachments") or []})
+                    "deleted": r["external_id"] in gone, "attachments": pl.get("attachments") or [],
+                    "arrived": _iso(from_db(r["received_at"], a.j.tz)), "seq": r["id"]})
     return out
 
 

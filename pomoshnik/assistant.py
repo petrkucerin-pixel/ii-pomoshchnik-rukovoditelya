@@ -393,6 +393,7 @@ class Assistant:
                 continue
             cat, summ, conf = classify(self.llm, e.subject, e.body, e.from_name)
             d = decide(self.p, cat, e.from_email, summary=summ or e.subject, confidence=conf)
+            d = self._not_spam_if_known(d, e.from_email)
             rec = getattr(e, "received", None) or self.clock.now()
             asked = self._asked_subject(e)
             if asked:                            # ответ исполнителя на вопрос помощника о задаче — узнаёт код
@@ -567,6 +568,43 @@ class Assistant:
                     self.digest.append(f"Не передано: {e.subject} — по «{subject}» вы отказали")
             self._log("delegation_released", event_id=h["event_id"], path="now", summary=f"{verdict}: {e.subject}",
                       payload={"verdict": verdict, "after": subject})
+
+    def _correspondents(self) -> set[str]:
+        """Адреса, которым мы уже писали (из кабинета или из почты руководителя)."""
+        return {((a["payload"] or {}).get("to") or "").strip().lower() for a in self.j.actions()
+                if a["kind"] == "mail_sent"} - {""}
+
+    def _not_spam_if_known(self, d: Decision, from_email: str) -> Decision:
+        """Письмо от того, кому мы писали, спамом не бывает: модель ошиблась — решает руководитель."""
+        if d.action != "игнорировать" or d.category != "спам":
+            return d
+        if (from_email or "").strip().lower() not in self._correspondents():
+            return d
+        return Decision("спросить_руководителя", "", "ответ от адреса, которому вы писали, — спамом не считаю, "
+                        "решаете вы", summary=d.summary, confidence=d.confidence, sender_role=d.sender_role)
+
+    def rescue_known_spam(self) -> int:
+        """Письма, скрытые как спам, хотя мы писали этому адресу, — возвращаются руководителю. Повтор — без изменений."""
+        known = self._correspondents()
+        moved = 0
+        last: dict[int, dict] = {}
+        for a in self.j.actions():
+            if is_mail_route(a["kind"]) and a["event_id"]:
+                last[a["event_id"]] = a
+        for eid, a in last.items():
+            pl = a["payload"] or {}
+            if a["kind"] != "mail_игнорировать" or pl.get("category") != "спам":
+                continue
+            e = letter_ns(self.j, eid)
+            if (e.from_email or "").lower() not in known:
+                continue
+            d = Decision("спросить_руководителя", "", "ответ от адреса, которому вы писали, — спамом не считаю, "
+                         "решаете вы", summary=pl.get("summary") or e.subject, confidence=pl.get("confidence") or 1.0)
+            self._act(e, d, eid, recheck=False)
+            moved += 1
+        if moved:
+            self._log("spam_rescued", summary=f"вернул из спама: {moved}", payload={"moved": moved})
+        return moved
 
     def recheck_queue(self) -> int:
         """Пересмотр очереди по текущим правилам профиля: письма, которым руководитель больше не нужен, уходят сами.

@@ -206,6 +206,7 @@ class Stand:
         a = Assistant(self.profile, self.llm, self.pult, self.mail, self.journal, self.protocols,
                       calendar_path=TASK / "calendar.ics", tasks_path=TASK / "tasks.csv", memory=self.memory)
         a.files_dir = RUNTIME / f"{self.profile_id}_files"     # вложения писем
+        a.rescue_known_spam()               # письма от тех, кому мы писали, спамом не бывают
         a.recheck_queue()                   # правила профиля могли поменяться: очередь пересматривается по новым
         from .voice import LocalWhisper, available
         a.transcribe = LocalWhisper() if available() else None     # голос в Telegram (TASK_16)
