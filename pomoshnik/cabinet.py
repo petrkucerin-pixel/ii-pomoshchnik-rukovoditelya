@@ -706,8 +706,13 @@ def card(a: Assistant) -> dict:
     """Кто руководитель и чем занимается. Правки руководителя — в журнале, последняя главнее файла профиля."""
     p, org = a.p, a.p.org
     leader = org.leader if org else None
-    goals = "; ".join(g.rstrip(".")[:1].lower() + g.rstrip(".")[1:] for g in p.goals)   # «SMB», «Облако Плюс» — как есть
-    base = {"name": p.name, "title": p.title, "about": f"Цели квартала: {goals}." if goals else "", "email": org.email_of(leader) if leader else "", "phone": "", "address": ""}
+    team = [x for x in org.people if x.role == "подчинённый"] if org else []
+    boss = next((x for x in org.people if x.role == "руководитель руководителя"), None) if org else None
+    about = " ".join(filter(None, [                 # без повтора должности и целей — они ниже отдельно
+        f"В команде {len(team)} руководителей направлений: " + ", ".join(x.position[:1].lower() + x.position[1:]
+                                                                    for x in team) + "." if team else "",
+        f"Подчиняется: {boss.name}, {boss.position[:1].lower() + boss.position[1:]}." if boss else ""]))
+    base = {"name": p.name, "title": p.title, "about": about, "email": org.email_of(leader) if leader else "", "phone": "", "address": ""}
     saved = next((x["payload"] for x in reversed(a.j.actions()) if x["kind"] == "profile_card"), {})
     out = {k: saved.get(k, base[k]) for k in CARD_FIELDS}
     return out | {"goals": p.goals, "style": p.style, "plan_time": p.plan_time, "week_time": p.week_time}

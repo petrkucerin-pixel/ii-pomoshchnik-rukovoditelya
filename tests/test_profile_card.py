@@ -32,7 +32,8 @@ def test_card_defaults_and_edit(env):
     d = c.get("/api/profile/card").json()
     assert d["name"] == "Иван Петров" and d["title"] and d["about"] and d["email"].endswith("@company.example")
     assert d["phone"] == "" and d["goals"]
-    assert "SMB" in d["about"] and "Облако Плюс" in d["about"] and d["title"] not in d["about"]   # регистр и без повтора
+    assert "В команде 7" in d["about"] and "Виктор Орлов" in d["about"] and d["title"] not in d["about"]
+    assert not any(g.rstrip(".") in d["about"] for g in d["goals"])          # цели — отдельным списком, без повтора
     r = c.put("/api/profile/card", json={**{k: d[k] for k in ("name", "title", "about", "email", "phone", "address")},
                                          "phone": "+7 (912) 000-00-00", "address": "Екатеринбург, ул. Малышева, 1",
                                          "about": "Руковожу продажами SMB и digital."})
