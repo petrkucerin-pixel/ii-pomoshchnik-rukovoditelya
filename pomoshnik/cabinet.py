@@ -768,13 +768,13 @@ def readable_key(key: str) -> str:
 
 
 # ---------------- Профиль → «Журнал действий» (Пит 28.11) ----------------
-JOURNAL_GROUPS = ["Почта и решения", "Встречи и аватар", "Протоколы и задачи", "Память и обучение", "Telegram"]
+JOURNAL_GROUPS = ["Почта и решения", "Встречи и аватар", "Протоколы и задачи", "Память и обучение", "Telegram", "Прочее"]
 _VERDICT = {"yes": "согласовали", "no": "отказали по", "later": "отложили"}
 _HIDDEN = {"inbox_done", "decision_prepared", "robot_live", "tg_sent"}   # tg_sent — текст сообщений, виден в подробностях      # служебное: результат виден в других записях
 
 
 def _jgroup(kind: str) -> str:
-    if kind.startswith(("mail_", "letter_", "decision_", "delegation_", "queue_")):
+    if kind.startswith(("mail_", "letter_", "decision_", "delegation_", "queue_", "reply_")):
         return "Почта и решения"
     if kind.startswith(("meeting", "avatar_", "robot_", "person_")):
         return "Встречи и аватар"
@@ -782,7 +782,9 @@ def _jgroup(kind: str) -> str:
         return "Протоколы и задачи"
     if kind.startswith(("memory_", "style_", "template_")):
         return "Память и обучение"
-    return "Telegram"
+    if kind.startswith(("tg_", "morning", "voice_")):
+        return "Telegram"
+    return "Прочее"                     # новый вид записи не выдаём за сообщение в Telegram (Пит 28.11)
 
 
 def _subject(summary: str) -> str:
@@ -821,7 +823,9 @@ def _jtext(x: dict) -> str:
         return f"Собрал черновик протокола «{s.split(':', 1)[0]}»"
     if k == "protocol_sent":
         return f"Вы утвердили протокол «{s.split(':', 1)[0]}», помощник разослал его"
-    if k in ("protocol_edit", "decision_draft_edit"):
+    if k == "reply_draft":
+        return f"Подготовил черновик ответа на «{s.split(': ', 1)[-1]}» — ждёт вас в почте"
+    if k in ("protocol_edit", "decision_draft_edit", "reply_draft_edit"):
         return f"Вы поправили: {s}"
     if k == "protocol_rejected":
         return "Вы отклонили протокол"
@@ -949,7 +953,15 @@ def journal_detail(a: Assistant, action_id: int) -> dict | None:
         f("Вид письма", pl.get("kind"))
         blocks.append({"label": "Письмо", "text": f"{pl.get('subject', '')}\n\n{pl.get('body', '')}"[:3000]})
         title = pl.get("subject") or "Письмо"
-    elif k in ("decision_draft_edit",):
+    elif k == "reply_draft":
+        ev = next((y for y in acts if y["kind"].startswith("mail_") and y["event_id"]
+                   and (a.j.event(y["event_id"]) or {}).get("external_id") == pl.get("letter_id")), None)
+        if ev:
+            letter(ev["event_id"])
+        blocks.append({"label": "Черновик ответа (в почте, на кнопке «Ответить»)", "text": pl.get("text", "")})
+        note = "Черновик никуда не отправлен: он ждёт вас в почте. В Telegram его не было."
+        title = x["summary"].split(": ", 1)[-1]
+    elif k in ("decision_draft_edit", "reply_draft_edit"):
         blocks += [{"label": "Черновик помощника", "text": pl.get("draft", "")},
                    {"label": "Вы отправили", "text": pl.get("text", "")}]
         title = x["summary"]

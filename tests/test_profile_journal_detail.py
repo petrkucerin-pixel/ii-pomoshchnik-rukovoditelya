@@ -85,3 +85,25 @@ def test_meeting_link_only_for_meetings_in_calendar(env):
     rows = [x for x in flat(c.get("/api/profile/journal").json()) if x["text"].startswith("Аватар зашёл")]
     links = {detail(c, x)["title"]: detail(c, x)["links"] for x in rows}
     assert links["Проверка"] == [] and links[a.meetings[0].title][0]["href"] == "#meetings/m/" + uid
+
+
+
+def test_mail_draft_is_mail_not_telegram(env):
+    """Пит 28.11: «В ТГ не вижу ничего такого?» — черновик ответа в почте попал в раздел «Telegram»."""
+    c, a, _ = env
+    a.j.log_action("reply_draft", path="now", summary="черновик ответа: Скидка 12%",
+                   payload={"letter_id": "m079", "text": "Ольга, согласую 12%."})
+    a.j.log_action("something_new", path="now", summary="новое действие", payload={})
+    items = flat(c.get("/api/profile/journal").json())
+    draft = next(x for x in items if "черновик ответа" in x["text"])
+    assert draft["group"] == "Почта и решения" and "ждёт вас в почте" in draft["text"]
+    assert next(x for x in items if x["text"] == "новое действие")["group"] == "Прочее"
+    d = detail(c, draft)
+    assert any("Ольга, согласую 12%" in b["text"] for b in d["blocks"]) and "В Telegram его не было" in d["note"]
+    assert not flat(c.get("/api/profile/journal", params={"group": "Telegram"}).json()) or all(
+        x["text"].startswith(("Прислал", "Telegram")) for x in flat(c.get("/api/profile/journal", params={"group": "Telegram"}).json()))
+
+
+def test_spam_is_not_remembered():
+    from pomoshnik.assistant import MEMORY_SKIP
+    assert "спам" in MEMORY_SKIP
