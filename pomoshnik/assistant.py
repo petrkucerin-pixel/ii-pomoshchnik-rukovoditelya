@@ -1057,7 +1057,8 @@ class Assistant:
                       payload={"protocol_id": pid, "owner_id": t.owner_id, "due": t.due.isoformat(), "n": i,
                                "after": t.after, "owner": t.owner, "what": t.what})
         self._apply_previous(p, pid)
-        self.remember(rec["transcript"], source=f"протокол {pid}", who=self.p.name, when=p.meeting_end, title=p.title)
+        self.remember(rec["transcript"], source=f"протокол {pid}", who=self.p.name, when=self.on_work_day(p.meeting_end),
+                      title=p.title)        # память — на рабочем дне помощника, протокол — в настоящем времени
         self._log("protocol_sent", actor="human", path="decision",
                   summary=f"{p.title}: разослано {len(to)}, задач {len(p.tasks)}",
                   payload={"protocol_id": pid, "minutes_to_approved": rec["minutes_to_approved"],

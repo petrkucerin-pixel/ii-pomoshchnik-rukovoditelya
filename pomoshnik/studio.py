@@ -65,7 +65,7 @@ def finish_session(a: Assistant, la, embed_id: str, title: str, uid: str | None)
     text = transcript_to_text(la.transcript(s.id), merge=True)
     if not text.strip():
         return 0
-    return a.new_meeting(text, title, a.on_work_day(end_time(s, TZ_EKB)), meeting_uid=uid)
+    return a.new_meeting(text, title, end_time(s, TZ_EKB), meeting_uid=uid)
 
 
 class Autopilot:

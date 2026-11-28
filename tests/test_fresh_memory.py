@@ -110,3 +110,14 @@ def test_decision_is_written_once_per_glued_topic(am):
     asst.sync_memory()
     decided = [f for f in asst.memory.all() if f.kind == "решение"]
     assert len(decided) == 1 and decided[0].what.startswith("отказ — ")          # без «Иван Петров: Иван Петров»
+
+
+
+def test_protocol_time_is_real_and_memory_is_on_work_day(a, monkeypatch):
+    """Живая встреча 28.11: протокол показал «−18719 мин после встречи» — время протокола переводили на учебный день."""
+    asst, clock, _ = a
+    monkeypatch.setenv("DEMO_DATE", "2026-12-11")
+    pid = asst.new_meeting("Сергей, договор с «Облако Плюс» нужно подписать к пятнице.", "Планёрка", clock.now())
+    draft = next(x for x in asst.j.actions() if x["kind"] == "protocol_draft")
+    assert draft["payload"]["minutes_to_draft"] >= 0
+    assert asst.on_work_day(clock.now()).date().isoformat() == "2026-12-11"

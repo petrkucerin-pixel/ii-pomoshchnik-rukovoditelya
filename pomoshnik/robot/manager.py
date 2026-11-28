@@ -187,7 +187,7 @@ class RobotManager:
         text = transcript_to_text(labeled, merge=True)
         people = ", ".join(sorted(robot.st.participants)) or "не определены"
         p = build_protocol(a.llm, f"Участники встречи в Телемосте: {people}\n\n{text}", title=robot.meta["title"],
-                           meeting_end=a.now(), org=a.p.org, rules=a.protocols.leader_rules())
+                           meeting_end=datetime.now(TZ_EKB), org=a.p.org, rules=a.protocols.leader_rules())
         robot.live = {"protocol": {"decisions": [d.text for d in p.decisions],
                                    "tasks": [{"owner": t.owner, "what": t.what, "due": t.due.isoformat(),
                                               "default_due": t.default_due} for t in p.tasks],
@@ -255,7 +255,7 @@ class RobotManager:
             people = ", ".join(sorted(st.participants)) or "не определены"
             body = f"Участники встречи в Телемосте: {people}\n\n{text}"
             with self.lock:
-                pid = a.new_meeting(body, meta["title"], a.now(), meeting_uid=meta["uid"])
+                pid = a.new_meeting(body, meta["title"], datetime.now(TZ_EKB), meeting_uid=meta["uid"])   # настоящее время: «встреча → протокол, мин»
         else:
             a.pult.send_text(f"«{meta['title']}»: разговора не было ({st.end_reason or 'робот вышел'}), протокола нет.")
         meta["protocol_id"] = pid
