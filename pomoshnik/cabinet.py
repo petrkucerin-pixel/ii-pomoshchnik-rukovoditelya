@@ -11,7 +11,7 @@ from urllib.parse import urlencode
 
 from yadro.journal import from_db
 
-from .assistant import Assistant, digest_from_journal, meeting_brief, protocol_tasks
+from .assistant import Assistant, digest_from_journal, is_mail_route, meeting_brief, protocol_tasks
 from .memory import collapse, period, topics, title_of
 from .metrics import compute_metrics
 from .plan import Meeting, TaskRow, build_day_plan, focus_windows
@@ -118,7 +118,7 @@ def _incoming(a: Assistant) -> list[dict]:
     released: dict[int, str] = {}
     for x in a.j.actions():
         pl = x["payload"] or {}
-        if x["kind"].startswith("mail_") and x["kind"] != "mail_sent" and x["event_id"]:
+        if is_mail_route(x["kind"]) and x["event_id"]:
             acts[x["event_id"]] = x
             if x["kind"] == "mail_делегировать" and pl.get("after"):
                 held.add(x["event_id"])
@@ -420,7 +420,7 @@ def _answer(a: Assistant, t: TaskRow, since: datetime) -> dict | None:
     for x in reversed(a.j.actions()):
         if x["at"] < since:
             break
-        if not (x["kind"].startswith("mail_") and x["kind"] != "mail_sent" and x["event_id"]):
+        if not (is_mail_route(x["kind"]) and x["event_id"]):
             continue
         ev = (a.j.event(x["event_id"]) or {}).get("payload") or {}
         if (ev.get("from") or "").lower() == email and t.task.lower() in (ev.get("subject") or "").lower():
@@ -477,7 +477,7 @@ def task_page(a: Assistant, task_id: str) -> dict | None:
     letters, seen = [], set()
     if key:
         for x in a.j.actions():
-            if not (x["kind"].startswith("mail_") and x["kind"] != "mail_sent" and x["event_id"]) or x["event_id"] in seen:
+            if not (is_mail_route(x["kind"]) and x["event_id"]) or x["event_id"] in seen:
                 continue
             ev = (a.j.event(x["event_id"]) or {}).get("payload") or {}
             if key.lower() in f"{ev.get('from_name', '')} {ev.get('subject', '')} {ev.get('body', '')}".lower():

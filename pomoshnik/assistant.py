@@ -109,8 +109,9 @@ def letter_payload(e) -> dict:
 
 
 def is_mail_route(kind: str) -> bool:
-    """Действие разбора входящего письма (не исходящее письмо)."""
-    return kind.startswith("mail_") and kind != "mail_sent"
+    """Действие разбора входящего письма — не исходящее, не «прочитано / удалено / восстановлено»."""
+    from .metrics import ROUTES
+    return kind in ROUTES
 
 
 def decisions_from_journal(journal: Journal) -> list[dict]:
