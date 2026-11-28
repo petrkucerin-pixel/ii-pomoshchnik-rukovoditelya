@@ -27,6 +27,7 @@ def init_scripts() -> list[str]:
             (HERE / "bridge.js").read_text(encoding="utf-8")]
 
 
+START_RETRIES = 2        # LiveAvatar разово не запустил сессию — ещё две попытки с новым ключом
 ALONE_AFTER_S = 120      # все ушли — робот выходит через 2 минуты
 NOBODY_S = 15 * 60       # никто не пришёл за 15 минут — робот выходит
 
@@ -231,6 +232,7 @@ async def run_meeting(link: str, *, name: str, token: str | None, until: float, 
         page = await ctx.new_page()
         page.on("console", lambda m: m.type == "error" and log.debug("console: %s", m.text[:200]))
         seen_log = 0
+        make_token, present, retries = None, [], 0
         try:
             room = await join_telemost(page, link, name, st, shots_dir)
             if token:
@@ -239,7 +241,8 @@ async def run_meeting(link: str, *, name: str, token: str | None, until: float, 
                 if present is None:
                     token, until = None, 0             # никто не пришёл или встречу остановили — выходим
                 elif callable(token):                  # сессия аватара — уже с составом встречи по подписям
-                    token = await asyncio.to_thread(token, present)
+                    make_token = token
+                    token = await asyncio.to_thread(make_token, present)
             if token:
                 st.status = "запуск аватара"
                 await room.evaluate("t => { window.__bridge.start(t); }", token)
@@ -259,6 +262,18 @@ async def run_meeting(link: str, *, name: str, token: str | None, until: float, 
                 st.participants |= {n for n in [*b["names"], *st.people.values()] if n and n != name}
                 st.status = {"live": "аватар во встрече", "error": "ошибка аватара", "ended": "аватар отключился"}.get(
                     b["state"], st.status)
+                # Пит 28.11: LiveAvatar разово не запустил сессию — встреча осталась с заглушкой «аватар недоступен».
+                # Пробуем ещё до двух раз с новым ключом сессии.
+                if b["state"] == "error" and make_token and retries < START_RETRIES:
+                    retries += 1
+                    st.note(f"аватар не запустился — пробую ещё раз ({retries} из {START_RETRIES})")
+                    await asyncio.sleep(5)
+                    try:
+                        fresh = await asyncio.to_thread(make_token, present_people(st, b, name))
+                        await room.evaluate("t => { window.__bridge.start(t); }", fresh)
+                    except Exception as ex:
+                        st.note(f"повторный запуск не удался: {type(ex).__name__}")
+                    continue
                 talking = talking_by_vad(st.vad, st.people, name)
                 if talking != last_talking:
                     st.note(f"говорят сейчас: {talking}")

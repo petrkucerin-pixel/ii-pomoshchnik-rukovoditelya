@@ -153,3 +153,9 @@ def test_profile_card_staff_avatars():
 def test_tile_and_page_share_labels():
     js = read("cabinet.js")
     assert js.count("ruleFacts(") >= 3 and js.count("metricFacts(") >= 2 and '"Сам · "' not in js
+
+
+def test_calendar_shows_weekend_and_demo_week():
+    """Пит 28.11: «какое число указывать? Субботы и воскресенья вообще нет в календаре»."""
+    js = read("cabinet.js")
+    assert "i < 5 ||" not in js and '" weekend"' in js and "Учебная неделя заказчика" in js

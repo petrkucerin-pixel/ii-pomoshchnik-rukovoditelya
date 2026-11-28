@@ -545,3 +545,10 @@ select { width: 100%; min-height: 44px; padding: 9px 12px; border-radius: var(--
 .mail-row-btn--unread .mail-row-from, .mail-row-btn--unread .mail-row-subject, .mail-row-btn--unread .mail-row-date { font-weight: 700; color: var(--ink); }
 .mail-row--you .mail-row-from, .mail-row--you .mail-row-subject, .mail-row--you .mail-row-date { font-weight: 400; }
 .mail-row-btn--unread .mail-row--you .mail-row-from, .mail-row-btn--unread .mail-row--you .mail-row-subject { font-weight: 700; }
+
+/* Календарь: 7 дней, выходные приглушены; плашка учебной недели (Пит 28.11) */
+.day-head.weekend { opacity: .6; }
+.day-column.weekend { background: rgba(19, 64, 126, .035); }
+.demo-note { flex-basis: 100%; margin: 0 0 6px; padding: 10px 14px; border-radius: 12px; background: #fff7e6;
+  color: #6b4a00; font-size: .9rem; }
+

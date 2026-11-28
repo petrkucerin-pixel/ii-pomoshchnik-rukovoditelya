@@ -742,8 +742,8 @@ function meetingButton(m, select, classes, ...children) {
 
 function weekCalendar(data, today, select) {
   const items = [...data.meetings, ...data.focus];
-  const days = Array.from({length: 7}, (_, i) => shiftDay(data.start, i))
-    .filter((day, i) => i < 5 || items.some(m => m.start.startsWith(day)));
+  const days = Array.from({length: 7}, (_, i) => shiftDay(data.start, i));     // 7 дней, выходные приглушены (Пит 28.11)
+  const weekend = day => [0, 6].includes(new Date(day + "T12:00").getDay());
   const first = Math.min(8, ...items.map(m => Math.floor(minute(m.start) / 60)));
   const last = Math.max(20, ...items.map(m => Math.ceil(minute(m.end) / 60)));
   const board = el("div", "week-grid");
@@ -751,7 +751,7 @@ function weekCalendar(data, today, select) {
   board.style.setProperty("--hours", last - first);
   board.append(el("div", "axis-head"));
   for (const day of days) {
-    board.append(el("div", "day-head" + (day === today ? " current" : ""),
+    board.append(el("div", "day-head" + (day === today ? " current" : "") + (weekend(day) ? " weekend" : ""),
       dateLabel(day, {weekday: "short"}), el("strong", "", Number(day.slice(8)))));
   }
   const axis = el("div", "time-axis");
@@ -766,7 +766,7 @@ function weekCalendar(data, today, select) {
     block.style.height = (minute(item.end) - minute(item.start)) / ((last - first) * 60) * 100 + "%";
   }
   for (const day of days) {
-    const col = el("div", "day-column");
+    const col = el("div", "day-column" + (weekend(day) ? " weekend" : ""));
     col.title = "Нажмите на свободное время, чтобы назначить встречу";
     col.addEventListener("click", ev => {          // клик по свободному месту — новая встреча на это время
       if (ev.target.closest(".event")) return;
@@ -1055,9 +1055,14 @@ function calendarView(host) {
       const add = button("+ Новая встреча", () => newMeetingDialog(day, "10:00"), "primary");
       const protocols = el("a", "button-ghost", "Протоколы"); protocols.href = "#meetings/protocols";
       const tasks = el("a", "button-ghost", "Задачи"); tasks.href = "#meetings/tasks";
-      toolbar.replaceChildren(el("div", "", el("span", "view-label", daily ? "День" : "Неделя"), el("h2", "", label),
+      // Стенд живёт на учебной неделе заказчика (DEMO_DATE): говорим об этом прямо (Пит 28.11: «какое число указывать?»)
+      const real = new Date().toLocaleDateString("sv");
+      const demo = real !== today ? el("p", "demo-note", "Учебная неделя заказчика: письма, встречи и задачи — 7–11 декабря. " +
+        "Сегодня по учебному календарю — " + dateLabel(today, {weekday: "long", day: "numeric", month: "long"}) +
+        ", время настоящее. Новые встречи назначайте на эти даты: на сегодня — " + dateLabel(today) + ".") : null;
+      toolbar.replaceChildren(...[demo, el("div", "", el("span", "view-label", daily ? "День" : "Неделя"), el("h2", "", label),
         hint(daily ? "Нажмите на встречу, чтобы открыть её" : "Нажмите на встречу, чтобы открыть её, или на свободное время — чтобы назначить новую")),
-        el("div", "actions", prev, button("Сегодня", () => move(today)), next, add, protocols, tasks));
+        el("div", "actions", prev, button("Сегодня", () => move(today)), next, add, protocols, tasks)].filter(Boolean));
       load(board, async area => {
         const data = await api("/api/meetings?" + new URLSearchParams({start, days: step}));
         data.focus = [];                  // окна для фокуса не показываем (решение Пита 27.11)

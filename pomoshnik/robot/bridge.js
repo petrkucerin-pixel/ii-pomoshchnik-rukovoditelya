@@ -115,6 +115,7 @@
   // ---- запуск аватара (вызывает робот после входа во встречу) ----
   bridge.start = async (token) => {
     try {
+      if (bridge.session) { try { await bridge.session.stop(); } catch (e) {} bridge.session = null; }   // повторный запуск
       audio(); screen();
       bridge.state = "starting";
       bridge.started = true;

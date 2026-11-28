@@ -60,3 +60,10 @@ def test_stop_while_waiting(monkeypatch):
     st = RobotState()
     st.stop = True
     assert asyncio.run(robot._wait_people(FakeRoom([{"names": [BOT], "count": 1}]), st, BOT, 100)) is None
+
+
+def test_avatar_start_is_retried_with_fresh_token(monkeypatch):
+    """Пит 28.11: SESSION_START_FAILED у LiveAvatar оставил встречу с заглушкой. Робот пробует ещё раз."""
+    import inspect
+    src = inspect.getsource(robot.run_meeting)
+    assert "START_RETRIES" in src and "make_token" in src and robot.START_RETRIES == 2
