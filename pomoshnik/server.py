@@ -940,6 +940,12 @@ def api_profile():
     return cabinet.profile(stand.assistant)
 
 
+@app.get("/api/profile/rules")
+def api_profile_rules():
+    with stand.lock:
+        return cabinet.rules(stand.assistant)
+
+
 @app.get("/api/journal")
 def api_journal(limit: int = 50):
     with stand.lock:

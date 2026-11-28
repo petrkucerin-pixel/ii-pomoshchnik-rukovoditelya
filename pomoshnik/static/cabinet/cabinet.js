@@ -971,16 +971,61 @@ function memoryPage(host) {
   });
 }
 
-function profilePage(host) {
+// Большая кнопка-плитка: заголовок, короткая суть, «Открыть →». Проваливаемся внутрь раздела профиля.
+function tile(href, symbol, title, lead, ...facts) {
+  const a = el("a", "tile t-card", el("span", "tile-head", icon(symbol), el("strong", "", title)),
+    el("p", "tile-lead", lead), facts.length ? el("div", "tile-facts", facts.map(f => el("span", "", f))) : null,
+    el("span", "tile-go", "Открыть", icon("arrow")));
+  a.href = href;
+  return a;
+}
+
+function profileBack() {
+  const a = el("a", "back-link", "← Профиль");
+  a.href = "#profile";
+  return a;
+}
+
+// Профиль → Правила: что решаете только вы, что помощник делает сам и кому передаёт (Пит 28.11).
+function rulesPage(host) {
   load(host, async mount => {
-    const [p, metrics, journal] = await Promise.all([api("/api/profile"), api("/api/metrics"), api("/api/journal?limit=50")]);
+    const d = await api("/api/profile/rules");
+    const letters = n => n ? n + " " + plural(n, ["письмо", "письма", "писем"]) : "писем пока не было";
+    const s = d.summary;
+    const head = el("div", "rules-head",
+      el("h2", "", "Правила помощника"),
+      el("p", "lead", "Помощник решает сам всё, что вы ему разрешили, и приходит к вам только с тем, что можете решить только вы."),
+      el("div", "tile-facts", el("span", "", "Решаете только вы · " + s.only_me),
+        el("span", "", "Делаю сам · " + s.auto), el("span", "", "Без вас · " + s.letters_without_you + " из " + s.letters)));
+    const mine = card("Решаете только вы", "check",
+      el("p", "reason", "Такие письма помощник не отправляет сам: готовит карточку с советом и черновиком, вы нажимаете «Согласовать» или «Отказать»."),
+      rows(d.only_me, x => el("div", "row", el("strong", "", x.title),
+        x.examples ? el("p", "", x.examples) : null, hint("Пришло вам на решение: " + letters(x.letters))), "Таких правил нет."));
+    const auto = d.groups.map(g => card(g.title, g.action === "делегировать" ? "arrow" : g.action === "авто" ? "mail" : "list",
+      el("p", "reason", g.what),
+      rows(g.rules, r => el("div", "row", el("strong", "", r.title),
+        r.to ? el("p", "", "→ " + r.to.name + ", " + r.to.position) : null,
+        hint("По правилу: " + letters(r.letters)),
+        el("p", "muted", "В профиле: «" + r.profile_line + "»")), "")));
+    const rest = card("Если правила нет", "profile", el("p", "", d.fallback.text),
+      hint("Так пришло: " + letters(d.fallback.letters)),
+      hint("Правила записаны в профиле руководителя (" + d.file + ") обычным текстом — менять их можно без программиста."));
+    mount.replaceChildren(profileBack(), head, el("div", "dashboard", stack(mine, rest), stack(...auto)));
+  });
+}
+
+function profilePage(host, sub = "") {
+  if (sub === "rules") return rulesPage(host);
+  load(host, async mount => {
+    const [p, metrics, journal, r] = await Promise.all([api("/api/profile"), api("/api/metrics"),
+      api("/api/journal?limit=50"), api("/api/profile/rules")]);
     const profile = card(p.name, "profile", hint(p.title), el("h3", "", "Цели"), bullets(p.goals, "Цели не указаны."),
-      el("h3", "", "Только с подтверждением"), el("div", "tags", p.confirm.map(x => badge(readable(x)))),
       el("h3", "", "Стиль общения"), el("p", "", p.style), el("h3", "", "Время плана"),
       el("p", "", "На день · " + p.plan_time), el("p", "", "На неделю · " + p.week_time));
-    const rules = card("Правила по категориям", "list", rows(Object.entries(p.rules), ([category, rule]) =>
-      el("div", "row", el("strong", "", readable(category)), el("p", "", readable(rule.action)),
-        rule.delegate_to ? hint("Исполнитель · " + rule.delegate_to) : null, hint(rule.source)), "Правил пока нет."));
+    const rules = tile("#profile/rules", "list", "Правила",
+      "Что решаете только вы, что помощник делает сам и кому передаёт.",
+      "Только вы · " + r.summary.only_me, "Сам · " + r.summary.auto,
+      "Без вас · " + r.summary.letters_without_you + " из " + r.summary.letters + " писем");
     const log = card("Журнал действий помощника", "clock", rows(journal.actions, a => el("div", "row",
       meta(stamp(a.at), {assistant: "Помощник", human: "Руководитель"}[a.actor] || a.actor),
       el("p", "", a.summary || readable(a.kind))), "Действий пока нет."));

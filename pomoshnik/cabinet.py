@@ -624,6 +624,68 @@ def profile(a: Assistant) -> dict:
             "plan_time": p.plan_time, "week_time": p.week_time, "style": p.style}
 
 
+# ---------------- Профиль → «Правила» (Пит 28.11: «большая кнопка, проваливаемся и читаем внутри») ----------------
+RULE_GROUPS = [("делегировать", "Передаю ответственному", "Письмо уходит сотруднику, вы видите это в сводке."),
+               ("авто", "Отвечаю сам", "Короткий ответ от вашего имени, без вас."),
+               ("в_сводку", "Читаю и кладу в сводку", "Не отвечаю, но то, что важно, будет в утренней сводке."),
+               ("игнорировать", "Пропускаю", "Рассылки и то, что не требует действий.")]
+RULE_TITLES = {"доступы": "Доступы к системам", "календарь": "Перенос внутренних встреч", "клиенты": "Запросы клиентов",
+               "отчёт": "Отчёты", "продажи": "Запросы по продажам", "рассылка": "Рассылки", "статус": "Статусы",
+               "обязательства_клиентам": "Обязательства клиентам"}
+
+
+def _confirm_lines(p) -> dict[str, tuple[str, str]]:
+    """«Никогда без подтверждения» из профиля: ключ → (название, примеры в скобках)."""
+    from .profile import _find, _items, _sections
+    out = {}
+    for line in _items(_find(_sections(p.text), "без подтверждения")):
+        text = line.rstrip(";. ")
+        title, _, rest = text.partition("(")
+        for key in p.confirm:
+            stems = [w[:6] for w in key.replace("_", " ").split()]
+            if key not in out and all(s in title.lower() for s in stems):
+                out[key] = (title.strip()[:1].upper() + title.strip()[1:], rest.rstrip(")").strip())
+    return out
+
+
+def rules(a: Assistant) -> dict:
+    p, org = a.p, a.p.org
+    counts: dict[tuple[str, str], int] = {}
+    for x in a.j.actions():
+        if x["kind"].startswith("mail_") and x["kind"] != "mail_sent":
+            k = (x["kind"][5:], (x["payload"] or {}).get("category") or "")
+            counts[k] = counts.get(k, 0) + 1
+    to_me = {c: n for (act, c), n in counts.items() if act == "спросить_руководителя" for _ in [0]}
+    lines = _confirm_lines(p)
+    only_me = [{"key": k, "title": lines.get(k, (RULE_TITLES.get(k, readable_key(k)), ""))[0],
+                "examples": lines.get(k, ("", ""))[1], "letters": to_me.get(k, 0)} for k in sorted(p.confirm)]
+    groups = []
+    for action, title, what in RULE_GROUPS:
+        rs = []
+        for cat, r in sorted(p.rules.items()):
+            if r.action != action:
+                continue
+            who = org.by_id.get(r.delegate_to) if org and r.delegate_to else None
+            rs.append({"category": cat, "title": RULE_TITLES.get(cat, readable_key(cat)),
+                       "to": {"name": who.name, "position": who.position} if who else None,
+                       "profile_line": r.source.rstrip(";. "), "letters": counts.get((action, cat), 0)})
+        if rs:
+            groups.append({"action": action, "title": title, "what": what, "rules": rs})
+    total = sum(counts.values())
+    asked = sum(n for (act, _), n in counts.items() if act == "спросить_руководителя")
+    unruled = sum(n for c, n in to_me.items() if c not in p.confirm)
+    return {"only_me": only_me, "groups": groups,
+            "fallback": {"text": "Для чего правила нет — спрашиваю вас и запоминаю, как вы решили.", "letters": unruled},
+            "summary": {"only_me": len(only_me), "auto": sum(len(g["rules"]) for g in groups), "letters": total,
+                        "letters_to_you": asked, "letters_without_you": total - asked},
+            "file": f"profiles/{p.id}/profile.md"}
+
+
+def readable_key(key: str) -> str:
+    t = key.replace("_", " ")
+    return t[:1].upper() + t[1:]
+
+
 def journal(a: Assistant, limit: int = 50) -> dict:
     acts = a.j.actions()[-max(1, min(limit, 500)):][::-1]
     return {"actions": [{"at": x["at"].isoformat(), "actor": x["actor"], "kind": x["kind"], "summary": x["summary"]}

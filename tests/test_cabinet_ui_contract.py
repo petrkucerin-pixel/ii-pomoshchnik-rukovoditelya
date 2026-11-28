@@ -13,7 +13,7 @@ STATIC = Path(srv.__file__).resolve().parent / "static" / "cabinet"
 SECTIONS = {"today": "Сегодня", "mail": "Переписка", "meetings": "Совещания", "memory": "Память", "profile": "Профиль"}
 ENDPOINTS = ["/api/today", "/api/decisions/", "/api/mail", "/api/style", "/api/style/teach", "/api/style/rules/", "/api/meetings",
              "/api/meetings/transcript", "/api/protocols", "/approve", "/reject", "/edit", "/api/tasks", "/api/memory",
-             "/api/edits", "/api/profile", "/api/metrics", "/api/journal", "/lead"]
+             "/api/edits", "/api/profile", "/api/profile/rules", "/api/metrics", "/api/journal", "/lead"]
 
 
 def read(name):
@@ -111,3 +111,12 @@ def test_meetings_calendar_alone_meeting_page_and_new_meeting_by_slot():
 def test_live_protocol_during_meeting_and_robot_per_meeting():
     js = read("cabinet.js")
     assert "протокол по ходу" in js and "/api/robot?" in js and "/api/robot/stop?" in js
+
+
+def test_profile_rules_is_a_big_button_with_its_own_page():
+    """Пит 28.11: «Правила — это большая кнопка. Проваливаемся и читаем внутри»."""
+    js = read("cabinet.js")
+    assert '"#profile/rules"' in js and 'sub === "rules"' in js and "← Профиль" in js
+    assert "Правила по категориям" not in js                       # старый список кодов вида «p08» убран
+    for word in ("Решаете только вы", "Передаю ответственному", "Если правила нет"):
+        assert word in js + read("index.html") or word in (Path(__file__).resolve().parent.parent / "pomoshnik" / "cabinet.py").read_text(encoding="utf-8"), word
