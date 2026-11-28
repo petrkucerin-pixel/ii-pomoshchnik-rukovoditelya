@@ -1,0 +1,421 @@
+<meta charset="utf-8">
+<title>ИИ-помощник руководителя — питч</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600&display=swap">
+<style>
+/* Питч «ИИ-помощник руководителя» — тем же языком, что питч «Смена» (кейс 1). Экраны — снимки стенда. */
+:root{
+  --black:#0B0B0B; --white:#FFFFFF; --paper:#F3F3F1; --grey:#8C8C88; --line-d:#2C2C2A; --line-l:#E3E3E0;
+  --signal:#E5341F;
+  --f:"Inter Tight","Segoe UI Variable Display","Segoe UI",system-ui,-apple-system,Roboto,sans-serif;
+  --gut:max(16px, env(safe-area-inset-left, 0px));
+  --gut-r:max(16px, env(safe-area-inset-right, 0px));
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--black);color:var(--white);font:500 16px/1.4 var(--f);letter-spacing:-0.02em;overflow:hidden;
+  font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--signal);outline-offset:3px}
+img{max-width:100%}
+
+/* ---------- сцены ---------- */
+#deck{position:fixed;inset:0}
+.scene{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;visibility:hidden;opacity:0;transition:opacity .45s ease,visibility 0s .45s;
+  padding:96px var(--gut-r) 110px var(--gut);display:flex;flex-direction:column;justify-content:safe center}
+.scene.on{visibility:visible;opacity:1;transition:opacity .45s ease}
+.dark{background:var(--black);color:var(--white)}
+.light{background:var(--white);color:var(--black)}
+.wrap{width:100%;max-width:1200px;margin:0 auto;display:grid;gap:28px;min-width:0}
+.eyebrow{font-size:13px;text-transform:uppercase;letter-spacing:0;color:var(--grey);margin:0}
+h1,h2,h3{font-weight:500;letter-spacing:-0.045em;margin:0;text-wrap:balance}
+h2{font-size:clamp(34px,5.4vw,76px);line-height:.95}
+.big{font-size:clamp(84px,15vw,220px);line-height:.82;letter-spacing:-0.065em}
+.lead{font-size:clamp(18px,2vw,24px);line-height:1.3;max-width:34ch;margin:0}
+.muted{color:var(--grey)}
+.sig{color:var(--signal)}
+.tag{display:inline-flex;align-items:center;min-height:30px;padding:0 12px;border:1.5px solid currentColor;border-radius:999px;
+  font-size:12px;text-transform:uppercase;letter-spacing:0;white-space:nowrap}
+.tag.fill{background:var(--signal);border-color:var(--signal);color:var(--white)}
+.side{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:48px;align-items:center}
+.side>*{min-width:0}
+.txt{display:grid;gap:22px;align-content:center}
+.pts{list-style:none;margin:0;padding:0;display:grid;border-top:1.5px solid currentColor}
+.pts li{padding:13px 0;border-bottom:1px solid var(--line-d);font-size:clamp(16px,1.6vw,20px);line-height:1.35;display:grid;grid-template-columns:2.2em minmax(0,1fr);gap:10px}
+.light .pts li{border-bottom-color:var(--line-l)}
+.pts b{font-weight:500;color:var(--grey);font-size:13px;padding-top:3px}
+
+/* телефон: рамка вокруг настоящего снимка экрана */
+.phones{display:flex;gap:18px;align-items:flex-end}
+.phone{width:clamp(200px,24vw,300px);border:7px solid var(--line-d);border-radius:30px;overflow:hidden;background:var(--white);
+  position:relative;flex:none;aspect-ratio:600/1298}
+.light .phone{border-color:var(--black)}
+.phone img{display:block;width:100%;height:100%;object-fit:cover;object-position:top}
+.phone.sm{width:clamp(150px,17vw,220px)}
+.phone .over{position:absolute;inset:0;opacity:0}
+.scene.on .phone .over{animation:fadein .7s ease both;animation-delay:calc(var(--d,0) * 1s)}
+@keyframes fadein{from{opacity:0}to{opacity:1}}
+
+/* появление: из видимого состояния, по очереди (--d) */
+.scene.on .a{animation:rise .6s cubic-bezier(.25,.1,.25,1) both;animation-delay:calc(var(--d,0) * 1s)}
+@keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+
+/* ---------- рамка: слово-знак, счётчик, навигация ---------- */
+.chrome{position:fixed;z-index:20;mix-blend-mode:difference;color:#fff;pointer-events:none}
+#mark{top:calc(18px + env(safe-area-inset-top,0px));left:var(--gut);font-weight:600;font-size:22px;letter-spacing:-0.06em;text-transform:lowercase}
+#count{top:calc(22px + env(safe-area-inset-top,0px));right:var(--gut-r);font-size:13px;text-transform:uppercase;letter-spacing:0;text-align:right}
+#nav{position:fixed;z-index:21;left:0;right:0;bottom:0;display:flex;align-items:center;gap:14px;
+  padding:12px var(--gut-r) calc(14px + env(safe-area-inset-bottom,0px)) var(--gut);mix-blend-mode:difference;color:#fff}
+#dots{display:flex;gap:4px;flex:1;min-width:0}
+#dots button{flex:1;min-width:0;height:44px;border:0;background:none;padding:0;cursor:pointer;position:relative}
+#dots button::after{content:"";position:absolute;left:0;right:0;top:50%;height:2px;background:currentColor;opacity:.35}
+#dots button[aria-current="true"]::after{opacity:1;height:4px;margin-top:-1px}
+.navbtn{width:44px;height:44px;border:1.5px solid currentColor;border-radius:50%;background:none;cursor:pointer;display:grid;place-items:center;font-size:18px;flex:none}
+
+/* ---------- 1. обложка: шторка «до/после» ---------- */
+#s1{padding:0;touch-action:none}
+.hint .touch{display:none}
+@media (hover:none){.hint .mouse{display:none}.hint .touch{display:inline}}
+.shot{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+#after{clip-path:inset(0 0 0 50%)}
+.shade{position:absolute;inset:0;background:linear-gradient(rgba(0,0,0,.55),rgba(0,0,0,0) 34%,rgba(0,0,0,0) 60%,rgba(0,0,0,.65))}
+#seam{position:absolute;top:0;bottom:0;left:50%;width:2px;background:#fff;mix-blend-mode:difference}
+#seam span{position:absolute;top:50%;font-size:12px;text-transform:uppercase;letter-spacing:0;color:#fff;transform:translateY(-50%);white-space:nowrap}
+#seam .l{right:12px} #seam .r{left:12px}
+.cover{position:absolute;inset:0;padding:96px var(--gut-r) 120px var(--gut);display:flex;flex-direction:column;justify-content:space-between;
+  color:#fff;pointer-events:none}
+.cover .word{font-weight:600;font-size:clamp(72px,15vw,230px);line-height:.8;letter-spacing:-0.075em;text-transform:lowercase}
+.cover .foot{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:16px}
+.cover .lbl{font-size:clamp(20px,2.6vw,34px);line-height:1;text-transform:uppercase;letter-spacing:-0.04em}
+.cover .hint{font-size:13px;text-transform:uppercase;letter-spacing:0}
+
+/* ---------- 2. как сейчас ---------- */
+.trail{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.trail .tag{font-size:13px;min-height:40px;padding:0 16px}
+.trail i{font-style:normal;color:var(--grey)}
+.trail .tag.fill{animation:none}
+.scene.on .trail .tag.fill{animation:rise .6s ease both, pulse 1.6s ease 2.2s 2}
+@keyframes pulse{50%{transform:scale(1.06)}}
+
+/* ---------- 5. не могу: фото препятствия ---------- */
+.photo{position:relative;overflow:hidden;border:1.5px solid var(--line-d)}
+.light .photo{border-color:var(--black)}
+.photo img{display:block;width:100%;aspect-ratio:4/3;object-fit:cover}
+.photo .cap{position:absolute;left:10px;bottom:10px;background:var(--black);color:var(--white);font-size:12px;text-transform:uppercase;padding:4px 9px;letter-spacing:0}
+.side.pic{grid-template-columns:minmax(0,1fr) minmax(0,460px)}
+.note{border-left:4px solid var(--signal);padding:6px 0 6px 16px;font-size:clamp(18px,2vw,26px);line-height:1.25;letter-spacing:-0.035em}
+
+/* ---------- 6. ИИ смотрит снимок ---------- */
+.ai{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,.85fr) auto;gap:32px;align-items:center}
+.ai>*{min-width:0}
+.scan{position:relative}
+.scan::after{content:"";position:absolute;left:0;right:0;top:0;height:22%;opacity:0;
+  background:linear-gradient(rgba(229,52,31,0),rgba(229,52,31,.32) 70%,rgba(229,52,31,.9));border-bottom:2px solid var(--signal)}
+.scene.on .scan::after{animation:scan 2.4s ease-in-out .6s 1 both}
+@keyframes scan{0%{top:-22%;opacity:1}90%{top:100%;opacity:1}100%{top:100%;opacity:0}}
+.ring{position:absolute;left:51%;top:63%;width:22%;aspect-ratio:1;border:3px solid var(--signal);border-radius:50%;
+  transform:translate(-50%,-50%) scale(.6);opacity:0}
+.scene.on .ring{animation:ring .5s ease 3.1s both}
+@keyframes ring{to{opacity:1;transform:translate(-50%,-50%) scale(1)}}
+.verdict{display:grid;gap:10px;align-content:start}
+.verdict .q{font-size:clamp(20px,2.4vw,30px);line-height:1.2;letter-spacing:-0.035em;max-width:24ch}
+.meter{display:flex;flex-wrap:wrap;gap:24px 44px;align-items:flex-end}
+.meter div{display:grid;gap:4px}
+.meter strong{font-size:clamp(40px,5vw,72px);line-height:.85;font-weight:500;letter-spacing:-0.06em}
+
+/* ---------- 7. табло ---------- */
+.desk{display:block;width:100%;border:1.5px solid var(--black)}
+.duo{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:20px;align-items:end;max-width:820px}
+.duo>*{min-width:0}
+
+/* ---------- 9. шаблон ---------- */
+.tpl{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:0;border:1.5px solid var(--black)}
+.tpl>div{padding:22px;display:grid;gap:12px;align-content:start;min-width:0}
+.tpl .core{background:var(--black);color:var(--white)}
+.tpl ul{list-style:none;margin:0;padding:0;display:grid;gap:8px;font-size:16px}
+.tpl li::before{content:"■ ";font-size:10px;vertical-align:middle}
+.swap{font-size:clamp(34px,4.6vw,64px);line-height:.95;letter-spacing:-0.05em;min-height:1.95em}
+.swap span{display:inline-block;animation:swapin .5s ease both}
+@keyframes swapin{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+
+/* ---------- 10. итог ---------- */
+.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px}
+.stats>div{display:grid;gap:8px;border-top:1.5px solid var(--black);padding-top:12px;align-content:start}
+.stats strong{font-size:clamp(52px,7vw,104px);line-height:.85;font-weight:500;letter-spacing:-0.06em}
+.stats span{font-size:14px;line-height:1.35}
+.finale{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:20px}
+.bigpill{background:var(--black);color:var(--white);border-radius:999px;padding:.08em .45em .14em;font-size:clamp(64px,11vw,150px);line-height:1;letter-spacing:-0.06em}
+.fine{font-size:12px;text-transform:uppercase;letter-spacing:0;color:var(--grey)}
+
+@media (max-width:820px){
+  .scene{justify-content:flex-start;padding-top:84px;padding-bottom:104px}
+  .side,.side.pic,.ai,.duo,.tpl{grid-template-columns:1fr;gap:26px}
+  .phones{justify-content:center}
+  .phone{width:min(62vw,280px)}
+  .phones .phone{width:min(44vw,220px)}
+  .phone.sm{width:min(36vw,170px)}
+  .stats{grid-template-columns:1fr 1fr}
+  #count .t{display:none}
+}
+@media (prefers-reduced-motion:reduce){
+  .scene,.scene.on{transition:none}
+  .scene.on .a,.scene.on .phone .over,.scene.on .scan::after,.scene.on .ring,.swap span,.scene.on .trail .tag.fill{animation:none}
+  .phone .over,.ring{opacity:1}
+}
+.duo{max-width:none;grid-template-columns:minmax(0,3fr) minmax(0,2fr);align-items:center}.desk{border-radius:10px}</style>
+
+<div id="deck">
+
+  <!-- 1. Обложка -->
+  <section class="scene dark" id="s1" data-title="Обложка" aria-label="Обложка: руководитель до и после помощника">
+    <img class="shot" id="before" src="media/before.jpg" alt="">
+    <img class="shot" id="after" src="media/after.jpg" alt="">
+    <div class="shade" aria-hidden="true"></div>
+    <div id="seam" aria-hidden="true"><span class="l">рутина на мне</span><span class="r">рутина у помощника</span></div>
+    <div class="cover">
+      <div class="word">помощник</div>
+      <div class="foot">
+        <div class="lbl">ИИ-помощник<br>руководителя</div>
+        <div class="hint">ИИкузница · трек «Цифровой аватар»<br><span class="mouse">ведите мышью по кадру · → пробел</span><span class="touch">проведите пальцем · кнопка →</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2. Как сейчас -->
+  <section class="scene light" id="s2" data-title="Как сейчас" aria-label="Как сейчас">
+    <div class="wrap">
+      <p class="eyebrow a">Как сейчас · руководитель направления SMB и Digital</p>
+      <div class="big a" style="--d:.15">50–100</div>
+      <p class="lead a" style="--d:.3">писем в день и 25–40 встреч в неделю. Решения теряются в почте, задачи после встреч — в головах.</p>
+      <div class="trail">
+        <span class="tag a" style="--d:.6">письмо</span><i class="a" style="--d:.7">→</i>
+        <span class="tag a" style="--d:.8">прочитать</span><i class="a" style="--d:.9">→</i>
+        <span class="tag a" style="--d:1">переслать</span><i class="a" style="--d:1.1">→</i>
+        <span class="tag a" style="--d:1.2">напомнить</span><i class="a" style="--d:1.3">→</i>
+        <span class="tag fill a" style="--d:1.5">нет времени на стратегию</span>
+      </div>
+      <p class="lead muted a" style="--d:1.8">Цель заказчика — вернуть руководителю 8–12 часов в неделю.</p>
+    </div>
+  </section>
+
+  <!-- 3. Почта -->
+  <section class="scene dark" id="s3" data-title="Почта" aria-label="Почта: помощник разбирает сам">
+    <div class="wrap">
+      <p class="eyebrow a">Почта · как в Outlook</p>
+      <h2 class="a" style="--d:.15">Половину писем помощник закрывает сам</h2>
+      <div class="duo">
+        <img class="desk a" style="--d:.4" src="media/Почта_входящие.jpg" alt="Входящие: у каждого письма метка, что сделал помощник; красная рамка — ждёт руководителя">
+        <ol class="pts">
+          <li class="a" style="--d:.5"><b>01</b>Передал исполнителю по оргструктуре, ответил сам, положил в сводку, отсеял спам.</li>
+          <li class="a" style="--d:.7"><b>02</b>Непонятно, что нужно внешнему, — сначала спросит у него, не у руководителя.</li>
+          <li class="a" style="--d:.9"><b>03</b>Деньги, кадры, обязательства клиентам, письма руководству — только руководителю, красной рамкой.</li>
+        </ol>
+      </div>
+      <p class="lead a" style="--d:1.1"><span class="sig">80 / 80</span> писем заказчика разобраны верно, ни одного нарушения запретов.</p>
+    </div>
+  </section>
+
+  <!-- 4. Решения -->
+  <section class="scene light" id="s4" data-title="Решения" aria-label="Решения одной кнопкой">
+    <div class="wrap">
+      <p class="eyebrow a">«Ждут только вас»</p>
+      <div class="big a" style="--d:.15">40 → 8</div>
+      <p class="lead a" style="--d:.3">писем к руководителю склеиваются в 8 вопросов. В карточке — запрос одной строкой, что мешает, совет и два готовых ответа: «согласовать» и «отказать».</p>
+      <div class="trail">
+        <span class="tag a" style="--d:.6">факт из задач и календаря</span><i class="a" style="--d:.7">+</i>
+        <span class="tag a" style="--d:.8">совет</span><i class="a" style="--d:.9">+</i>
+        <span class="tag a" style="--d:1">готовый ответ</span><i class="a" style="--d:1.1">→</i>
+        <span class="tag fill a" style="--d:1.3">одна кнопка в Telegram</span>
+      </div>
+      <p class="lead muted a" style="--d:1.6">Каждый факт — дословно из источника. Число без источника помощник подсвечивает: «проверьте».</p>
+    </div>
+  </section>
+
+  <!-- 5. Встреча с аватаром -->
+  <section class="scene dark" id="s5" data-title="Аватар" aria-label="Аватар ведёт встречу в Телемосте">
+    <div class="wrap side pic">
+      <div class="txt">
+        <p class="eyebrow a">Встреча · Яндекс Телемост</p>
+        <h2 class="a" style="--d:.15">Аватар сам приходит на встречу</h2>
+        <ol class="pts">
+          <li class="a" style="--d:.4"><b>01</b>По календарю заходит в Телемост и представляется: «ИИ-помощник Ивана Петрова».</li>
+          <li class="a" style="--d:.6"><b>02</b>Спрашивает по прошлому протоколу: что готово, решён ли вопрос, не поменялась ли задача.</li>
+          <li class="a" style="--d:.8"><b>03</b>Даёт слово по очереди, различает говорящих, решений про деньги и людей не принимает.</li>
+        </ol>
+      </div>
+      <div class="photo a" style="--d:.5"><img src="media/telemost.jpg" alt="Телемост: участник и аватар «ИИ-помощник Ивана Петрова»" style="aspect-ratio:auto"><span class="cap">настоящая встреча</span></div>
+    </div>
+  </section>
+
+  <!-- 6. Протокол -->
+  <section class="scene light" id="s6" data-title="Протокол" aria-label="Протокол за секунды">
+    <div class="wrap">
+      <p class="eyebrow a">После встречи</p>
+      <h2 class="a" style="--d:.15">Протокол — через 16 секунд, с цитатами</h2>
+      <div class="duo">
+        <img class="desk a" style="--d:.4" src="media/Встреча_и_протокол.jpg" alt="Карточка встречи: протокол с решениями, поручениями и цитатами">
+        <ol class="pts">
+          <li class="a" style="--d:.5"><b>01</b>У каждого решения и поручения — цитата из расшифровки. 9 из 9 найдены.</li>
+          <li class="a" style="--d:.7"><b>02</b>Сверка с прошлым: выполнена / перенесена / «было → стало».</li>
+          <li class="a" style="--d:.9"><b>03</b>Утвердил в Telegram — разослано участникам, задачи с порядком «после 1, 2».</li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7. Сроки -->
+  <section class="scene dark" id="s7" data-title="Сроки" aria-label="Просрочки выясняет помощник">
+    <div class="wrap">
+      <p class="eyebrow a">Задачи и сроки</p>
+      <h2 class="a" style="--d:.15">Просрочку выясняет помощник, а не руководитель</h2>
+      <div class="duo">
+        <img class="desk a" style="--d:.4" src="media/Задача_просрочена.jpg" alt="Задача: почему просрочена, что помощник уже спросил, что дальше">
+        <ol class="pts">
+          <li class="a" style="--d:.5"><b>01</b>Сам пишет исполнителю: «срок прошёл — какой реальный?»</li>
+          <li class="a" style="--d:.7"><b>02</b>Назвал дату и она не расходится с планами — срок перенесён без руководителя.</li>
+          <li class="a" style="--d:.9"><b>03</b>Ответ уходит в память и в вопросы к следующей встрече.</li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <!-- 8. Масштаб -->
+  <section class="scene light" id="s8" data-title="Масштаб" aria-label="Профиль — это настройки">
+    <div class="wrap">
+      <p class="eyebrow a">Не под одного руководителя</p>
+      <h2 class="a" style="--d:.15">Второй руководитель — новая папка, без кода</h2>
+      <div class="tpl a" style="--d:.4">
+        <div class="core">
+          <span class="eyebrow">Ядро · общее</span>
+          <ul>
+            <li>Разбор почты: модель читает, код решает</li>
+            <li>Карточки решений и очередь</li>
+            <li>Аватар, протоколы, сроки, память</li>
+            <li>Журнал каждого действия и метрики</li>
+          </ul>
+        </div>
+        <div>
+          <span class="eyebrow">Профиль · свой</span>
+          <ul>
+            <li>цели квартала и кому что передавать</li>
+            <li>что «никогда без меня»</li>
+            <li>как я пишу — учится на правках</li>
+            <li>ритм: план в 8:30, итог в пятницу</li>
+          </ul>
+        </div>
+      </div>
+      <p class="lead muted a" style="--d:.8">Модель меняется в настройках — в том числе на российскую или локальную в закрытом контуре.</p>
+    </div>
+  </section>
+
+  <!-- 9. Цена -->
+  <section class="scene dark" id="s9" data-title="Цена" aria-label="Сколько стоит">
+    <div class="wrap">
+      <p class="eyebrow a">Сколько стоит</p>
+      <div class="meter">
+        <div class="a" style="--d:.2"><span class="eyebrow">Письмо</span><strong>0,07 ₽</strong></div>
+        <div class="a" style="--d:.35"><span class="eyebrow">1000 писем</span><strong>≈70 ₽</strong></div>
+        <div class="a" style="--d:.5"><span class="eyebrow">Протокол</span><strong>$0,005</strong></div>
+        <div class="a" style="--d:.65"><span class="eyebrow">Аватар</span><strong>$99/мес</strong></div>
+      </div>
+      <p class="lead a" style="--d:.9">DeepSeek Flash на письмо. Голос — Whisper на нашем сервере, 0 ₽. Аватар — подписка LiveAvatar, ≈ 15 ₽ за минуту встречи.</p>
+    </div>
+  </section>
+
+  <!-- 10. Итог -->
+  <section class="scene light" id="s10" data-title="Итог" aria-label="Итог">
+    <div class="wrap">
+      <p class="eyebrow a">Итог · стенд работает сейчас</p>
+      <div class="stats">
+        <div class="a" style="--d:.15"><strong>80/80</strong><span>писем заказчика разобраны верно, 0 нарушений запретов</span></div>
+        <div class="a" style="--d:.3"><strong>55 %</strong><span>писем на стенде — без руководителя</span></div>
+        <div class="a" style="--d:.45"><strong>16 с</strong><span>от конца встречи до протокола с цитатами</span></div>
+        <div class="a" style="--d:.6"><strong class="sig">4,7 ч</strong><span>освобождено на учебной неделе; цель — 8–12</span></div>
+      </div>
+      <div class="finale">
+        <span class="bigpill a" style="--d:.9">вопросы?</span>
+        <span class="fine a" style="--d:1.1">194-87-110-81.sslip.io<br>данные — синтетический набор заказчика</span>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="chrome" id="mark" aria-hidden="true">помощник</div>
+<div class="chrome" id="count"><span id="num">01 / 10</span><br><span class="t" id="ttl">Обложка</span></div>
+<nav id="nav" aria-label="Слайды">
+  <button class="navbtn" id="prev" type="button" aria-label="Предыдущий слайд">←</button>
+  <div id="dots"></div>
+  <button class="navbtn" id="next" type="button" aria-label="Следующий слайд">→</button>
+</nav>
+
+<script>
+(function () {
+  const $ = id => document.getElementById(id);
+  const scenes = [...document.querySelectorAll(".scene")];
+  const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let cur = -1, timers = [];
+  const later = (fn, ms) => timers.push(setTimeout(fn, still ? 0 : ms));
+  const clear = () => { timers.forEach(clearTimeout); timers = []; };
+
+  $("dots").innerHTML = scenes.map((s, i) => '<button type="button" aria-label="' + (i + 1) + ". " + s.dataset.title + '"></button>').join("");
+  const dots = [...$("dots").children];
+
+  function go(i) {
+    i = Math.max(0, Math.min(scenes.length - 1, i));
+    if (i === cur) return;
+    clear();
+    if (cur >= 0) scenes[cur].classList.remove("on");
+    cur = i;
+    const s = scenes[i];
+    void s.offsetWidth;                      // перезапуск анимаций при повторном входе
+    s.classList.add("on");
+    s.scrollTop = 0;
+    dots.forEach((d, k) => d.setAttribute("aria-current", k === i ? "true" : "false"));
+    $("num").textContent = String(i + 1).padStart(2, "0") + " / " + scenes.length;
+    $("ttl").textContent = s.dataset.title;
+    try { history.replaceState(null, "", "#" + s.id); } catch (e) { /* в файле с телефона адрес может не меняться — не страшно */ }
+    (enter[s.id] || (() => {}))();
+  }
+
+  const enter = {};
+
+  // ---------- обложка: шторка «до/после» ходит сама, за курсором или пальцем ----------
+  let target = 0.5, x = 0.5, mouseAt = -1e9;
+  const follow = e => { if (cur === 0) { target = Math.max(0, Math.min(1, e.clientX / innerWidth)); mouseAt = performance.now(); } };
+  window.addEventListener("pointermove", follow, {passive: true});
+  window.addEventListener("pointerdown", follow, {passive: true});
+  (function frame(now) {
+    if (cur === 0) {
+      if (now - mouseAt > 2500) target = still ? 0.5 : 0.5 + 0.36 * Math.sin(now / 1900);
+      x += (target - x) * 0.08;
+      const p = (x * 100).toFixed(2);
+      $("after").style.clipPath = "inset(0 0 0 " + p + "%)";
+      $("seam").style.left = p + "%";
+    }
+    requestAnimationFrame(frame);
+  })(0);
+
+  // ---------- управление: клавиши, кнопки, точки, свайп ----------
+  $("prev").addEventListener("click", () => go(cur - 1));
+  $("next").addEventListener("click", () => go(cur + 1));
+  dots.forEach((d, k) => d.addEventListener("click", () => go(k)));
+  document.addEventListener("keydown", e => {
+    if (["ArrowRight", "PageDown", " ", "Enter"].includes(e.key) && !e.target.closest("button")) { e.preventDefault(); go(cur + 1); }
+    else if (["ArrowLeft", "PageUp", "Backspace"].includes(e.key)) { e.preventDefault(); go(cur - 1); }
+    else if (e.key === "Home") go(0);
+    else if (e.key === "End") go(scenes.length - 1);
+  });
+  let sx = 0, sy = 0;
+  document.addEventListener("touchstart", e => { sx = e.touches[0].clientX; sy = e.touches[0].clientY; }, {passive: true});
+  document.addEventListener("touchend", e => {
+    const dx = e.changedTouches[0].clientX - sx, dy = e.changedTouches[0].clientY - sy;
+    if (cur === 0) return;                  // на обложке свайп водит шторку, дальше — кнопкой →
+    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.4) go(cur + (dx < 0 ? 1 : -1));
+  }, {passive: true});
+
+  const start = scenes.findIndex(s => "#" + s.id === location.hash);
+  go(start >= 0 ? start : 0);
+})();
+</script>
