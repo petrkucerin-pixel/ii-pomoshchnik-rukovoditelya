@@ -402,7 +402,8 @@ function mailPage(host, folder = "") {
     const inFolder = f => letters.filter(m => folderOf(m) === f)
       .sort((a, b) => (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0));
     const youCount = inFolder("inbox").filter(m => m.status && m.status.kind === "you").length;
-    const side = el("nav", "mail-side");
+    const side = el("div", "mail-side");
+    side.setAttribute("role", "navigation");
     side.setAttribute("aria-label", "Папки почты");
     side.append(...MAIL_FOLDERS.map(([key, name]) => {
       const n = key === "style" ? "" : key === "inbox" ? (youCount || "") : inFolder(key).length;

@@ -451,7 +451,7 @@ select { width: 100%; min-height: 44px; padding: 9px 12px; border-radius: var(--
   .mail-side { display: flex; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); }
   .mail-folder-btn { width: auto; white-space: nowrap; }
   .mail-head { display: none; }
-  .mail-row { grid-template-columns: 32px minmax(0, 1fr) auto; grid-template-areas: "av from date" "av subj subj" "av prev prev" "av tag tag"; }
+  .mail-row { grid-template-columns: 32px minmax(0, 1fr) 76px; grid-template-areas: "av from date" "av subj subj" "av prev prev" "av tag tag"; }
   .mail-row-tag { justify-self: start; }
   .mail-list, .mail-pane { max-height: none; }
   .mail-col { border-right: 0; }
@@ -488,3 +488,10 @@ select { width: 100%; min-height: 44px; padding: 9px 12px; border-radius: var(--
 .donut-row { display: grid; grid-template-columns: 12px 1fr auto; align-items: center; gap: 10px; }
 .swatch { width: 12px; height: 12px; border-radius: 3px; }
 .donut-name { color: var(--ink, #13407e); }
+.mail-side, .mail-col, .mail-pane { min-width: 0; }
+.mail-outlook { max-width: 100%; }
+.mail-row > *, .mail-tools > *, .mail-folder > * { min-width: 0; }
+.mail-row-btn { max-width: 100%; overflow: hidden; }
+.mail-tools select { width: 42%; flex: none; }
+.mail-side { scrollbar-width: none; }
+.mail-side::-webkit-scrollbar { display: none; }
