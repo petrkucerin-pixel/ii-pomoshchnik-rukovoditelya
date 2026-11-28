@@ -624,7 +624,16 @@ def today(a: Assistant, protocols) -> dict:
             "overdue": [task_dict(t, day, asked=asked_tasks(a)) for t in plan.overdue],
             "due_soon": [task_dict(t, day) for t in plan.due_soon],
             "focus": _focus(a.meetings, day),
-            "digest": digest_from_journal(a.j, a.p.org)[-10:]}
+            **_digest_today(a)}
+
+
+def _digest_today(a: Assistant) -> dict:
+    """Сводка «что сделал без вас» — за сегодня (настоящий день); раньше — числом со ссылкой в журнал (Пит 28.11)."""
+    now = a.clock.now()
+    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_ = digest_from_journal(a.j, a.p.org, since=start)
+    earlier = len(digest_from_journal(a.j, a.p.org)) - len(today_)
+    return {"digest": today_[-10:], "digest_earlier": max(0, earlier), "updated_at": now.isoformat(timespec="minutes")}
 
 
 # ---------------- совещания и протоколы ----------------

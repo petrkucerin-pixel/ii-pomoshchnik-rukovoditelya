@@ -121,3 +121,15 @@ def test_protocol_time_is_real_and_memory_is_on_work_day(a, monkeypatch):
     draft = next(x for x in asst.j.actions() if x["kind"] == "protocol_draft")
     assert draft["payload"]["minutes_to_draft"] >= 0
     assert asst.on_work_day(clock.now()).date().isoformat() == "2026-12-11"
+
+
+
+def test_today_digest_is_for_today_and_counts_earlier(a):
+    from pomoshnik import cabinet
+    asst, clock, _ = a
+    asst.process_inbox()
+    d = cabinet.today(asst, asst.protocols)
+    assert d["digest"] and d["digest_earlier"] == 0 and d["updated_at"]
+    clock.advance(days=1)
+    d2 = cabinet.today(asst, asst.protocols)
+    assert d2["digest"] == [] and d2["digest_earlier"] == len(cabinet.digest_from_journal(asst.j, asst.p.org))

@@ -328,11 +328,18 @@ function todayPage(host, sub = "") {
         card("Задачи", "list", el("h3", "", "Просроченные"), rows(d.overdue, taskRow, "Просроченных задач нет."),
           el("h3", "", "Ближайшие"), rows(d.due_soon, taskRow, "Ближайших сроков нет."))),
       stack(illus(card("Встречи дня", "meetings", schedule), "calendar"),
-        card("Сводка помощника", "mail",
+        card("Сводка помощника за сегодня", "mail",
           el("p", "reason", "Что помощник сделал сам, без вас: передал письма, ответил, прочитал отчёты."),
-          bullets(d.digest, "Пока нет записей.")))));
+          bullets(d.digest, "Сегодня помощник ещё ничего не делал сам."),
+          d.digest_earlier ? el("p", "muted", "Ранее — " + d.digest_earlier + " " +
+            plural(d.digest_earlier, ["действие", "действия", "действий"]) + ". ",
+            Object.assign(el("a", "", "Журнал действий"), {href: "#profile/journal"})) : null))));
+    mount.prepend(el("div", "updated-line", hint("Обновлено в " + time(d.updated_at) + " · обновляется само раз в час"),
+      button("Обновить сейчас", () => refresh(), "button-ghost")));
   });
   refresh();
+  // Пит 28.11: «Тут нужна актуальность. Обновление раз в час»
+  const hourly = setInterval(() => { if (host.isConnected) refresh(); else clearInterval(hourly); }, 3600 * 1000);
 }
 
 // Почта как в Outlook (Пит 27–28.11): папки слева, список «От / Тема / Получено», область чтения справа.

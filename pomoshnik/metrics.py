@@ -63,9 +63,9 @@ def compute_metrics(j: Journal, protocols=None) -> dict:
     res["cards"] = {
         "писем разобрано": res["letters"],
         "без руководителя": f"{round(100 * res['share_without_leader'])} %" if mail else "—",
-        "часов освобождено": res["hours_saved"],
+        "часов освобождено": round(res["hours_saved"], 1),        # как в «Профиль → Метрики»
         "встреча → протокол, мин": res["protocol_minutes_to_draft"] if drafts else "—",
         "правок руководителя": edits,
-        "расходы на модель, $": res["llm_cost_usd"],
+        "расходы на модель, $": round(res["llm_cost_usd"], 2),
     }
     return res

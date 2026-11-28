@@ -552,3 +552,6 @@ select { width: 100%; min-height: 44px; padding: 9px 12px; border-radius: var(--
 .demo-note { flex-basis: 100%; margin: 0 0 6px; padding: 10px 14px; border-radius: 12px; background: #fff7e6;
   color: #6b4a00; font-size: .9rem; }
 
+/* «Сегодня»: когда обновлено (Пит 28.11) */
+.updated-line { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; margin-bottom: 10px; }
+

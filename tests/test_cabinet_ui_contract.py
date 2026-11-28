@@ -159,3 +159,9 @@ def test_calendar_shows_weekend_and_demo_week():
     """Пит 28.11: «какое число указывать? Субботы и воскресенья вообще нет в календаре»."""
     js = read("cabinet.js")
     assert "i < 5 ||" not in js and '" weekend"' in js and "Учебная неделя заказчика" in js
+
+
+def test_today_refreshes_hourly_and_digest_is_today():
+    """Пит 28.11: «Тут нужна актуальность. Обновление раз в час»."""
+    js = read("cabinet.js")
+    assert "3600 * 1000" in js and "Сводка помощника за сегодня" in js and "digest_earlier" in js
