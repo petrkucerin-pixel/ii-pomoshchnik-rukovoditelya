@@ -555,3 +555,9 @@ select { width: 100%; min-height: 44px; padding: 9px 12px; border-radius: var(--
 /* «Сегодня»: когда обновлено (Пит 28.11) */
 .updated-line { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; margin-bottom: 10px; }
 
+/* «Встречи дня»: прошла / идёт сейчас / следующая (Пит 28.11) */
+.meeting-past { opacity: .5; }
+.meeting-now { outline: 2px solid var(--ink, #13407e); outline-offset: -2px; }
+.when-chip { margin-left: auto; font-size: .8rem; font-weight: 600; color: #4b5d78; white-space: nowrap; }
+.meeting-now .when-chip { color: var(--ink, #13407e); }
+

@@ -316,9 +316,27 @@ function todayPage(host, sub = "") {
     const queue = card("Ждут только вас", "check", decisions[0] || hint("Все решения приняты."));
     queue.querySelector("h2").append(count(decisions));
     if (decisions.length > 1) queue.append(fold("Ещё в очереди · " + (decisions.length - 1), ...decisions.slice(1)));
-    const schedule = rows(d.meetings, m => button(
-      el("span", "time-row", el("strong", "", interval(m)), el("span", "", m.title), icon("arrow")),
-      () => openMeeting(m), "row-link"), "Встреч на сегодня нет.");
+    // Пит 28.11: «Встречи дня не обновились» — прошедшие приглушены, текущая и следующая отмечены, раз в минуту
+    const schedule = rows(d.meetings, m => {
+      const row = button(el("span", "time-row", el("strong", "", interval(m)), el("span", "", m.title),
+        el("span", "when-chip"), icon("arrow")), () => openMeeting(m), "row-link");
+      row.dataset.start = minute(m.start); row.dataset.end = minute(m.end);
+      return row;
+    }, "Встреч на сегодня нет.");
+    const mark = () => {
+      const now = new Date(), cur = now.getHours() * 60 + now.getMinutes();
+      let nextSet = false;
+      schedule.querySelectorAll("[data-start]").forEach(r => {
+        const s = +r.dataset.start, e = +r.dataset.end, chip = r.querySelector(".when-chip");
+        const state = e <= cur ? "past" : s <= cur ? "now" : !nextSet ? "next" : "";
+        if (state === "next") nextSet = true;
+        r.classList.toggle("meeting-past", state === "past");
+        r.classList.toggle("meeting-now", state === "now");
+        chip.textContent = {past: "прошла", now: "идёт сейчас", next: "следующая"}[state] || "";
+      });
+    };
+    mark();
+    const ticker = setInterval(() => { if (schedule.isConnected) mark(); else clearInterval(ticker); }, 60 * 1000);
     illus(queue, "mail");
     const risks = card("Риски", "alert", (d.risk_items || []).length
       ? el("div", "rows", d.risk_items.map(riskItem)) : bullets(d.risks, "Рисков не зафиксировано."));

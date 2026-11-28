@@ -165,3 +165,9 @@ def test_today_refreshes_hourly_and_digest_is_today():
     """Пит 28.11: «Тут нужна актуальность. Обновление раз в час»."""
     js = read("cabinet.js")
     assert "3600 * 1000" in js and "Сводка помощника за сегодня" in js and "digest_earlier" in js
+
+
+def test_today_meetings_show_past_now_next():
+    """Пит 28.11: «Встречи дня не обновились»."""
+    js = read("cabinet.js")
+    assert "идёт сейчас" in js and "meeting-past" in js and "60 * 1000" in js
