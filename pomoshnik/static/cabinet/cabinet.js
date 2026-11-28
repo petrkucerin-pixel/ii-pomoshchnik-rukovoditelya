@@ -1208,11 +1208,41 @@ function journalPage(host) {
       el("div", "segmented journal-groups", [["", "Все разделы"], ...d.groups.map(g => [g, g])]
         .map(([k, label]) => toggle(label, group === k, () => { group = k; render(); }))));
     list.replaceChildren(...(d.days.length ? d.days.map(day => card(day.label, "clock",
-      rows(day.items, x => el("div", "row journal-row" + (x.who === "Вы" ? " journal-mine" : ""),
-        meta(time(x.at), x.who, x.group),
-        el("p", "", x.text + (x.times > 1 ? "  ×" + x.times : ""))), ""))) : [hint("Записей нет.")]));
+      rows(day.items, journalRow, ""))) : [hint("Записей нет.")]));
   }
   render();
+}
+
+// Строка журнала раскрывается: письмо, что ушло, кому и почему, протокол, встреча, текст в Telegram.
+function journalRow(x) {
+  const box = el("div", "row journal-row" + (x.who === "Вы" ? " journal-mine" : ""));
+  const head = el("button", "journal-head", meta(time(x.at), x.who, x.group),
+    el("span", "journal-text", x.text + (x.times > 1 ? "  ×" + x.times : "")), el("span", "journal-more", "Подробнее"));
+  head.type = "button";
+  head.setAttribute("aria-expanded", "false");
+  const more = el("div", "journal-detail");
+  more.hidden = true;
+  head.addEventListener("click", async () => {
+    const open = head.getAttribute("aria-expanded") !== "true";
+    head.setAttribute("aria-expanded", String(open));
+    head.querySelector(".journal-more").textContent = open ? "Свернуть" : "Подробнее";
+    more.hidden = !open;
+    if (!open || more.childElementCount) return;
+    try {
+      const d = await api("/api/profile/journal/" + x.id);
+      more.replaceChildren(
+        el("strong", "", d.title),
+        x.times > 1 ? hint("Повторялось " + x.times + " раз, показана последняя запись.") : null,
+        d.fields.length ? el("dl", "journal-fields", ...d.fields.flatMap(f => [el("dt", "", f.label), el("dd", "", f.value)])) : null,
+        ...d.blocks.map(b => el("div", "journal-block", el("span", "muted", b.label), el("p", "letter-example", b.text))),
+        d.note ? hint(d.note) : null,
+        d.links.length ? el("div", "actions", ...d.links.map(l => { const a = el("a", "button-ghost", l.label); a.href = l.href; return a; })) : null);
+    } catch (e) {
+      more.replaceChildren(hint("Не удалось загрузить подробности."));
+    }
+  });
+  box.append(head, more);
+  return box;
 }
 
 function profilePage(host, sub = "") {

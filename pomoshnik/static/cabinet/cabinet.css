@@ -505,3 +505,15 @@ select { width: 100%; min-height: 44px; padding: 9px 12px; border-radius: var(--
 .mail-read-tools { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .mail-compose { display: grid; gap: 10px; }
 .mail-compose textarea { min-height: 200px; }
+
+/* Журнал: строка раскрывается (Пит 28.11: «хочется нажать и почитать подробнее») */
+.journal-head { display: grid; gap: 4px; width: 100%; text-align: left; background: transparent; border: 0; box-shadow: none;
+  padding: 0; min-height: 44px; cursor: pointer; color: inherit; font: inherit; }
+.journal-head:hover .journal-text { text-decoration: underline; }
+.journal-more { font-size: .85rem; font-weight: 600; color: var(--ink, #13407e); }
+.journal-detail { display: grid; gap: 10px; margin-top: 10px; padding: 14px; border-radius: 14px; background: rgba(255, 255, 255, .6); }
+.journal-fields { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; }
+.journal-fields dt { color: #4b5d78; }
+.journal-fields dd { margin: 0; overflow-wrap: anywhere; }
+.journal-block { display: grid; gap: 4px; }
+@media (max-width: 600px) { .journal-fields { grid-template-columns: 1fr; } .journal-fields dd { margin-bottom: 6px; } }

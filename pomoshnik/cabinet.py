@@ -719,7 +719,7 @@ def readable_key(key: str) -> str:
 # ---------------- Профиль → «Журнал действий» (Пит 28.11) ----------------
 JOURNAL_GROUPS = ["Почта и решения", "Встречи и аватар", "Протоколы и задачи", "Память и обучение", "Telegram"]
 _VERDICT = {"yes": "согласовали", "no": "отказали по", "later": "отложили"}
-_HIDDEN = {"inbox_done", "decision_prepared", "robot_live"}      # служебное: результат виден в других записях
+_HIDDEN = {"inbox_done", "decision_prepared", "robot_live", "tg_sent"}   # tg_sent — текст сообщений, виден в подробностях      # служебное: результат виден в других записях
 
 
 def _jgroup(kind: str) -> str:
@@ -806,7 +806,7 @@ def journal_feed(a: Assistant, *, who: str = "", group: str = "", limit: int = 3
     rows: list[dict] = []
     last_seen: tuple | None = None
     for x in acts:
-        item = {"at": x["at"].isoformat(), "who": "Вы" if x["actor"] == "human" else "Помощник",
+        item = {"id": x["id"], "at": x["at"].isoformat(), "who": "Вы" if x["actor"] == "human" else "Помощник",
                 "group": _jgroup(x["kind"]), "text": _jtext(x), "times": 1}
         key = (item["who"], item["text"], item["at"][:10])
         if key != last_seen:
@@ -819,7 +819,7 @@ def journal_feed(a: Assistant, *, who: str = "", group: str = "", limit: int = 3
         prev = rows[-1] if rows else None
         if prev and (prev["who"], prev["text"]) == (item["who"], item["text"]) and prev["at"][:10] == item["at"][:10]:
             prev["times"] += 1
-            prev["at"] = item["at"]
+            prev["at"], prev["id"] = item["at"], item["id"]
             continue
         rows.append(item)
     rows = rows[-limit:][::-1]
@@ -828,6 +828,127 @@ def journal_feed(a: Assistant, *, who: str = "", group: str = "", limit: int = 3
         days.setdefault(r["at"][:10], []).append(r)
     return {"groups": JOURNAL_GROUPS, "counts": counts,
             "days": [{"day": d, "label": _day_label(d, a), "items": items} for d, items in days.items()]}
+
+
+def _strip_html(text: str) -> str:
+    import html as _h
+    return _h.unescape(re.sub(r"<[^>]+>", "", text or ""))
+
+
+def journal_detail(a: Assistant, action_id: int) -> dict | None:
+    """Подробности записи журнала: письмо, что ушло, кому и почему, протокол, встреча, текст в Telegram."""
+    from datetime import timedelta as _td
+    acts = a.j.actions()
+    x = next((y for y in acts if y["id"] == action_id), None)
+    if x is None:
+        return None
+    k, pl = x["kind"], x["payload"] or {}
+    fields: list[dict] = []
+    blocks: list[dict] = []
+    links: list[dict] = []
+    note = ""
+
+    def f(label, value):
+        if value not in (None, "", []):
+            fields.append({"label": label, "value": str(value)})
+
+    def letter(eid):
+        ev = a.j.event(eid) if eid else None
+        if not ev:
+            return None
+        p = ev["payload"] or {}
+        f("От", (p.get("from_name") or "") + (f" <{p['from']}>" if p.get("from") else ""))
+        f("Тема", p.get("subject"))
+        f("Получено", (p.get("received") or "")[:16].replace("T", " "))
+        if p.get("body"):
+            blocks.append({"label": "Письмо", "text": p["body"][:3000]})
+        links.append({"label": "Открыть в переписке", "href": "#mail"})
+        return p
+
+    def sent_for(eid):
+        key = pl.get("key")                     # копии одного вопроса: ответ записан к первой
+        eids = {y["event_id"] for y in acts if key and y["kind"] == "letter_decided"
+                and (y["payload"] or {}).get("key") == key} | {eid}
+        for y in acts:
+            if y["kind"] == "mail_sent" and y["event_id"] in eids and y["event_id"]:
+                sp = y["payload"]
+                blocks.append({"label": f"Ушло → {sp.get('to', '')}", "text": f"{sp.get('subject', '')}\n\n{sp.get('body', '')}"[:3000]})
+
+    if k.startswith("mail_") and k != "mail_sent":
+        p = letter(x["event_id"]) or {}
+        f("Решение", _jtext(x).split(" «", 1)[0])
+        who = a.p.org.by_id.get(pl.get("delegate_to")) if a.p.org and pl.get("delegate_to") else None
+        if who:
+            f("Кому", f"{who.name}, {who.position}")
+        f("Почему", pl.get("reason") or (x["summary"].split(" — ", 1)[1] if " — " in x["summary"] else ""))
+        f("Категория", (pl.get("category") or "").replace("_", " "))
+        sent_for(x["event_id"])
+        title = p.get("subject") or _jtext(x)
+    elif k == "letter_decided":
+        letter(x["event_id"])
+        f("Ваше решение", {"yes": "согласовать", "no": "отказать", "later": "отложить"}.get(pl.get("verdict"), pl.get("verdict")))
+        sent_for(x["event_id"])
+        title = x["summary"].split(": ", 1)[-1]
+    elif k == "mail_sent":
+        f("Кому", pl.get("to"))
+        f("Вид письма", pl.get("kind"))
+        blocks.append({"label": "Письмо", "text": f"{pl.get('subject', '')}\n\n{pl.get('body', '')}"[:3000]})
+        title = pl.get("subject") or "Письмо"
+    elif k in ("decision_draft_edit",):
+        blocks += [{"label": "Черновик помощника", "text": pl.get("draft", "")},
+                   {"label": "Вы отправили", "text": pl.get("text", "")}]
+        title = x["summary"]
+    elif k.startswith("protocol") and pl.get("protocol_id"):
+        rec = a.protocols.get(pl["protocol_id"])
+        if rec:
+            f("Протокол", f"№{rec['id']} · {rec['title']}")
+            f("Статус", rec["status"])
+            tasks = (rec["data"] or {}).get("tasks") or []
+            if tasks:
+                blocks.append({"label": "Задачи", "text": "\n".join(f"• {t.get('owner', '')}: {t.get('what', '')}"
+                                                                   for t in tasks)})
+        if pl.get("minutes_to_draft") is not None:
+            f("Черновик через", f"{pl['minutes_to_draft']:.1f} мин после встречи")
+        if pl.get("minutes_to_approved") is not None:
+            f("Утверждён через", f"{pl['minutes_to_approved']:.0f} мин после встречи")
+        links.append({"label": "Все протоколы", "href": "#meetings/protocols"})
+        title = rec["title"] if rec else _jtext(x)
+    elif k.startswith(("robot_", "avatar_", "meeting")):
+        f("Встреча", pl.get("title"))
+        f("Начало", (pl.get("start") or "")[11:16])
+        f("Ссылка", pl.get("link") or pl.get("url"))
+        f("Причина", pl.get("reason") or pl.get("error"))
+        f("Участники", ", ".join(pl.get("participants") or []))
+        f("Протокол", f"№{pl['protocol_id']}" if pl.get("protocol_id") else "")
+        if pl.get("uid"):
+            links.append({"label": "Открыть встречу", "href": "#meetings/m/" + pl["uid"]})
+        title = pl.get("title") or _jtext(x)
+    elif k == "memory_saved":
+        facts = [m for m in (a.memory.all() if a.memory else []) if m.source == pl.get("source")]
+        blocks.append({"label": "Что запомнил", "text": "\n".join(f"• {m.topic}: {m.what}" for m in facts) or "—"})
+        f("Источник", pl.get("source"))
+        links.append({"label": "Память", "href": "#memory"})
+        title = _jtext(x)
+    elif k == "memory_decision":
+        f("Темы памяти", ", ".join(pl.get("topics") or []))
+        links.append({"label": "Память", "href": "#memory"})
+        title = x["summary"]
+    elif k in ("morning_plan", "tg_block", "tg_remind"):
+        sent = [y for y in acts if y["kind"] == "tg_sent" and x["at"] - _td(seconds=5) <= y["at"] <= x["at"] + _td(minutes=2)]
+        for y in sent:
+            blocks.append({"label": "Сообщение в Telegram", "text": y["payload"].get("text", "")})
+        if not sent:
+            note = "Текст сообщения тогда не сохранялся — помощник сохраняет его с 28.11."
+        title = _jtext(x)
+    else:
+        for key, v in pl.items():
+            if isinstance(v, (str, int, float)) and key not in ("minutes_saved", "day"):
+                f(key.replace("_", " ").capitalize(), v)
+        title = _jtext(x)
+    if not (fields or blocks or note):
+        note = "Подробностей у этой записи нет."
+    return {"id": x["id"], "at": x["at"].isoformat(), "who": "Вы" if x["actor"] == "human" else "Помощник",
+            "title": title, "text": _jtext(x), "fields": fields, "blocks": blocks, "links": links, "note": note}
 
 
 def _day_label(d: str, a: Assistant) -> str:

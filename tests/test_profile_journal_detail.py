@@ -1,0 +1,58 @@
+"""Журнал действий: запись раскрывается — подробности (Пит 28.11: «хочется нажать и почитать подробнее»)."""
+from test_cabinet_api import env  # noqa: F401 — env — фикстура стенда на учебных данных
+
+
+def flat(d):
+    return [x for day in d["days"] for x in day["items"]]
+
+
+def detail(c, item):
+    r = c.get(f"/api/profile/journal/{item['id']}")
+    assert r.status_code == 200
+    return r.json()
+
+
+def test_every_row_opens(env):
+    c, a, _ = env
+    a.decide_letter(a.active_groups()[0]["event_id"], "no", text="Сейчас не можем, вернёмся в январе.", notify=False)
+    items = flat(c.get("/api/profile/journal").json())
+    for x in items[:40]:
+        d = detail(c, x)
+        assert d["title"] and (d["fields"] or d["blocks"] or d["note"])
+
+
+def test_decision_shows_letter_and_what_was_sent(env):
+    c, a, _ = env
+    g = a.active_groups()[0]
+    a.decide_letter(g["event_id"], "no", text="Сейчас не можем, вернёмся в январе.", notify=False)
+    row = next(x for x in flat(c.get("/api/profile/journal").json()) if x["text"].startswith("Вы отказали"))
+    d = detail(c, row)
+    blocks = {b["label"]: b["text"] for b in d["blocks"]}
+    assert g["subject"] in d["title"] or any(g["subject"] in v for v in blocks.values())
+    assert any("вернёмся в январе" in v for v in blocks.values())            # что ушло отправителю
+    assert any(f["label"] == "От" for f in d["fields"])                       # само письмо
+
+
+def test_delegation_shows_whom_and_why(env):
+    c, a, _ = env
+    row = next(x for x in flat(c.get("/api/profile/journal").json()) if x["text"].startswith("Передал ответственному"))
+    d = detail(c, row)
+    labels = {f["label"]: f["value"] for f in d["fields"]}
+    assert labels.get("Кому") and labels.get("Почему") and labels.get("От")
+
+
+def test_telegram_text_is_kept_and_shown(env):
+    c, a, _ = env
+    import pomoshnik.server as srv
+    srv.stand.pult.target = type("T", (), {"send_text": lambda self, t: 1, "send_buttons": lambda self, t, b: 2})()
+    a.morning_plan(a.today())
+    row = next(x for x in flat(c.get("/api/profile/journal", params={"group": "Telegram"}).json())
+               if x["text"].startswith("Прислал утренний план"))
+    d = detail(c, row)
+    assert any("Доброе утро" in b["text"] and "<b>" not in b["text"] for b in d["blocks"])
+    assert not any(x["text"].startswith("tg") for x in flat(c.get("/api/profile/journal").json()))   # сами отправки — не строки
+
+
+def test_unknown_id_is_404(env):
+    c, _, _ = env
+    assert c.get("/api/profile/journal/999999").status_code == 404

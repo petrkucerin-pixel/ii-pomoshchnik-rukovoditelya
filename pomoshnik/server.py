@@ -125,11 +125,26 @@ class DeferredPult:
     def __init__(self):
         self.target: TelegramPult | None = None
 
+    on_send = None                          # стенд пишет текст каждого сообщения в журнал (подробности журнала)
+
+    def _keep(self, text, buttons=None):
+        if self.on_send:
+            try:
+                self.on_send(text, buttons)
+            except Exception:
+                log.exception("журнал сообщения Telegram")
+
     def send_text(self, text):
-        return self.target.send_text(text) if self.target else 0
+        mid = self.target.send_text(text) if self.target else 0
+        if mid:
+            self._keep(text)
+        return mid
 
     def send_buttons(self, text, buttons):
-        return self.target.send_buttons(text, buttons) if self.target else 0
+        mid = self.target.send_buttons(text, buttons) if self.target else 0
+        if mid:
+            self._keep(text, buttons)
+        return mid
 
     def answer_callback(self, cid, text=""):
         if self.target:
@@ -156,6 +171,7 @@ class Stand:
         self.profile = load_profile(pdir, org_path=TASK / "org_structure.csv")
         self.mail = make_mailbox(self.profile_id)
         self.pult = DeferredPult()
+        self.pult.on_send = self._tg_sent
         self.lock = threading.RLock()        # бот и кабинет работают с одним помощником
         self.assistant: Assistant = self._new_assistant()
         self.status = {"bot": "не запущен", "last_poll": None, "error": "", "autopilot": "не запущен"}
@@ -166,6 +182,14 @@ class Stand:
                                    base_url=os.environ.get("STAND_URL", "https://194-87-110-81.sslip.io"),
                                    categories={c.strip() for c in os.environ.get("AVATAR_CATEGORIES", "операционная").split(",")
                                                if c.strip()})
+
+    def _tg_sent(self, text, buttons=None):
+        import re as _re
+        import html as _h
+        plain = _h.unescape(_re.sub(r"<[^>]+>", "", text or ""))
+        self.journal.log_action("tg_sent", path="now", summary=plain.split("\n", 1)[0][:120],
+                                payload={"text": plain[:4000],
+                                         "buttons": [b.label for row in (buttons or []) for b in row]})
 
     def _new_assistant(self) -> Assistant:
         a = Assistant(self.profile, self.llm, self.pult, self.mail, self.journal, self.protocols,
@@ -995,6 +1019,15 @@ def api_profile_journal(who: str = "", group: str = ""):
         raise HTTPException(422, "неизвестный фильтр")
     with stand.lock:
         return cabinet.journal_feed(stand.assistant, who=who, group=group)
+
+
+@app.get("/api/profile/journal/{action_id}")
+def api_profile_journal_detail(action_id: int):
+    with stand.lock:
+        d = cabinet.journal_detail(stand.assistant, action_id)
+    if d is None:
+        raise HTTPException(404, "нет такой записи")
+    return d
 
 
 @app.get("/api/profile/rules")
