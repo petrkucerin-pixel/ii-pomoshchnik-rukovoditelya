@@ -845,6 +845,10 @@ def _jtext(x: dict) -> str:
         return f"Пересмотрел очередь по новым правилам: {s}"
     if k == "person_alias":
         return f"Запомнил, кто есть кто: {s}"
+    if k == "task_action" and pl.get("action") == "ask":
+        m = re.match(r"Спросил (.+?), что с «(.+)»$", s)
+        if m:
+            return f"Спросил исполнителя ({m.group(1)}), что с задачей «{m.group(2)}»"
     return s or k.replace("_", " ")
 
 
@@ -972,6 +976,46 @@ def journal_detail(a: Assistant, action_id: int) -> dict | None:
         if pl.get("uid"):
             links.append({"label": "Открыть встречу", "href": "#meetings/m/" + pl["uid"]})
         title = pl.get("title") or _jtext(x)
+    elif k == "task_action":
+        tid = pl.get("task_id")
+        found = next(((t, src) for t, src in all_tasks(a) if t.id == tid), None)
+        what = {"ask": "Задача просрочена — помощник сам написал исполнителю и спросил, что с ней. Вас не звал.",
+                "remind": "Напомнил исполнителю по вашей просьбе.",
+                "move": f"Перенёс срок на {(pl.get('due') or '')[8:10]}.{(pl.get('due') or '')[5:7]}"
+                        + (": так ответил исполнитель, с планами не расходится." if pl.get("by") == "answer" else "."),
+                "done": "Задача отмечена выполненной.",
+                "proposal": "Исполнитель назвал новый срок, но он расходится с планами — решаете вы."}.get(pl.get("action"), "")
+        f("Что сделано", what)
+        if found:
+            t, _ = found
+            f("Задача", t.task)
+            f("Исполнитель", t.owner)
+            f("Срок", f"{t.due:%d.%m.%Y}")
+            f("Статус", t.status)
+            mail = [y for y in acts if y["kind"] == "mail_sent"
+                    and (y["payload"].get("subject") or "").startswith(f"Задача «{t.task}»")]
+            if mail:
+                y = min(mail, key=lambda y: abs((y["at"] - x["at"]).total_seconds()))
+                blocks.append({"label": f"Письмо исполнителю → {y['payload'].get('to', '')}",
+                               "text": f"{y['payload'].get('subject', '')}\n\n{y['payload'].get('body', '')}"[:3000]})
+            page = task_page(a, tid) or {}
+            ans = page.get("answer")
+            if ans:
+                text = ans if isinstance(ans, str) else (ans.get("text") or ans.get("body") or ans.get("quote") or "")
+                blocks.append({"label": "Ответ исполнителя", "text": str(text)[:3000]})
+            elif pl.get("action") == "ask":
+                note = "Ответа пока нет. Если его не будет 2 дня, помощник спросит ещё раз."
+            if pl.get("conflicts"):
+                f("С чем расходится", "; ".join(pl["conflicts"]))
+            links.append({"label": "Открыть задачу", "href": "#meetings/t/" + t.id})
+        title = found[0].task if found else _jtext(x)
+    elif k == "report_review":
+        f("Что заметил", x["summary"])
+        f("Кому написал", pl.get("to_name") or pl.get("to"))
+        if pl.get("question"):
+            blocks.append({"label": "Вопрос", "text": pl["question"]})
+        f("Источник", ", ".join(pl.get("sources") or []))
+        title = pl.get("topic") or _jtext(x)
     elif k == "memory_saved":
         facts = [m for m in (a.memory.all() if a.memory else []) if m.source == pl.get("source")]
         blocks.append({"label": "Что запомнил", "text": "\n".join(f"• {m.topic}: {m.what}" for m in facts) or "—"})
@@ -990,9 +1034,13 @@ def journal_detail(a: Assistant, action_id: int) -> dict | None:
             note = "Текст сообщения тогда не сохранялся — помощник сохраняет его с 28.11."
         title = _jtext(x)
     else:
+        # прочее: только понятные поля, служебные (id, ключи, флаги) не показываем
+        names = {"to": "Кому", "subject": "Тема", "title": "Встреча", "topic": "Тема", "reason": "Причина",
+                 "person": "Человек", "display": "Подпись в Телемосте", "moved": "Сколько писем", "summary": "Суть",
+                 "question": "Вопрос", "error": "Ошибка", "facts": "Фактов", "text": "Текст"}
         for key, v in pl.items():
-            if isinstance(v, (str, int, float)) and key not in ("minutes_saved", "day"):
-                f(key.replace("_", " ").capitalize(), v)
+            if key in names and isinstance(v, (str, int, float)) and v != "":
+                f(names[key], v)
         title = _jtext(x)
     if not (fields or blocks or note):
         note = "Подробностей у этой записи нет."

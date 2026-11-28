@@ -215,10 +215,7 @@ function taskView(host, id) {
     }
     const letter = x => el("div", "row", meta(x.from, x.at ? stamp(x.at) : "", x.route), el("strong", "", x.subject));
     const fact = f => el("div", "row", meta(f.who, f.when, f.source), el("p", "", f.what), el("blockquote", "", f.quote));
-    const back = button("← Назад", () => {
-      const head = location.hash.slice(1).split("/")[0] || "today";
-      if (history.length > 1) history.back(); else location.hash = head;
-    }, "quiet back-link");
+    const back = backTo(location.hash.slice(1).split("/")[0] || "today", "Назад");
     mount.replaceChildren(back,
       card(t.task, "list",
         meta(t.owner, el("span", t.overdue ? "late" : "", "до " + dateLabel(t.due)), t.status, "откуда: " + t.source),
@@ -993,10 +990,31 @@ async function mutateProtocol(id, suffix, payload) {
   announce({"/approve": "Протокол утверждён и разослан", "/reject": "Протокол отклонён", "/edit": "Правка внесена"}[suffix]);
 }
 
-function backLink(text = "← Календарь") {
-  const a = el("a", "back-link", text);
-  a.href = "#meetings";
+// «Назад» ведёт туда, откуда пришли (Пит 28.11: «если зашёл из профиля, то и вернуться должен в профиль»).
+// Кабинет помнит путь внутри вкладки; открыли страницу по прямой ссылке — «назад» ведёт на запасное место.
+const visited = [];
+const PLACES = [["profile/journal", "Журнал действий"], ["profile/rules", "Правила"], ["profile/metrics", "Метрики"],
+  ["profile", "Профиль"], ["meetings/protocols", "Протоколы"], ["meetings/tasks", "Задачи"], ["meetings/m/", "Встреча"],
+  ["meetings/t/", "Задача"], ["meetings", "Календарь"], ["mail", "Переписка"], ["memory", "Память"], ["today/t/", "Задача"],
+  ["today", "Сегодня"]];
+function placeName(hash) {
+  const hit = PLACES.find(([h]) => h.endsWith("/") ? hash.startsWith(h) : hash === h || hash.startsWith(h + "/"));
+  return hit ? hit[1] : "Назад";
+}
+function remember(hash) {
+  if (visited.length > 1 && visited[visited.length - 2] === hash) visited.pop();      // вернулись назад
+  else if (visited[visited.length - 1] !== hash) visited.push(hash);
+}
+function backTo(fallbackHash, fallbackName) {
+  const prev = visited.length > 1 ? visited[visited.length - 2] : null;
+  const a = el("a", "back-link", "← " + (prev ? placeName(prev) : fallbackName));
+  a.href = "#" + (prev || fallbackHash);
+  a.addEventListener("click", e => { if (prev) { e.preventDefault(); history.back(); } });
   return a;
+}
+
+function backLink(text = "← Календарь") {
+  return backTo("meetings", text.replace(/^←\s*/, ""));
 }
 
 function calendarView(host) {
@@ -1154,9 +1172,7 @@ function tile(href, symbol, title, lead, ...facts) {
 }
 
 function profileBack() {
-  const a = el("a", "back-link", "← Профиль");
-  a.href = "#profile";
-  return a;
+  return backTo("profile", "Профиль");
 }
 
 // Профиль → Правила: что решаете только вы, что помощник делает сам и кому передаёт (Пит 28.11).
@@ -1358,6 +1374,7 @@ function profilePage(host, sub = "") {
 const pages = {today: todayPage, mail: mailPage, meetings: meetingsPage, memory: memoryPage, profile: profilePage};
 function route() {
   const hash = location.hash.slice(1);
+  remember(hash || "today");
   const head = hash.split("/")[0], sub = hash.slice(head.length + 1);
   const key = Object.hasOwn(pages, head) ? head : "today";
   if (head !== key) history.replaceState(null, "", "#" + key);

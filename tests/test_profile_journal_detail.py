@@ -56,3 +56,19 @@ def test_telegram_text_is_kept_and_shown(env):
 def test_unknown_id_is_404(env):
     c, _, _ = env
     assert c.get("/api/profile/journal/999999").status_code == 404
+
+
+
+def test_task_row_explains_itself_without_technical_fields(env):
+    """Пит 28.11: «Не понял. Что тут?» — было «Task id t007 / Action ask»."""
+    c, a, _ = env
+    from pomoshnik import cabinet
+    cabinet.chase_overdue(a)
+    row = next(x for x in flat(c.get("/api/profile/journal", params={"group": "Протоколы и задачи"}).json())
+               if x["text"].startswith("Спросил исполнителя ("))
+    d = detail(c, row)
+    labels = {f["label"]: f["value"] for f in d["fields"]}
+    assert "просрочена" in labels["Что сделано"] and labels["Исполнитель"] and labels["Срок"]
+    assert not any(f["label"].lower() in ("task id", "action") for f in d["fields"])
+    assert any(b["label"].startswith("Письмо исполнителю") for b in d["blocks"])
+    assert d["links"][0]["href"].startswith("#meetings/t/")

@@ -116,7 +116,7 @@ def test_live_protocol_during_meeting_and_robot_per_meeting():
 def test_profile_rules_is_a_big_button_with_its_own_page():
     """Пит 28.11: «Правила — это большая кнопка. Проваливаемся и читаем внутри»."""
     js = read("cabinet.js")
-    assert '"#profile/rules"' in js and 'sub === "rules"' in js and "← Профиль" in js
+    assert '"#profile/rules"' in js and 'sub === "rules"' in js and 'backTo("profile", "Профиль")' in js
     assert "Правила по категориям" not in js                       # старый список кодов вида «p08» убран
     for word in ("Решаете только вы", "Передаю ответственному", "Если правила нет"):
         assert word in js + read("index.html") or word in (Path(__file__).resolve().parent.parent / "pomoshnik" / "cabinet.py").read_text(encoding="utf-8"), word
@@ -134,3 +134,10 @@ def test_profile_journal_is_a_tile_with_its_own_page():
     """Пит 28.11: журнал действий — плитка, внутри по дням, фильтры «Помощник / Вы» и по разделам."""
     js = read("cabinet.js")
     assert '"#profile/journal"' in js and 'sub === "journal"' in js and "Журнал действий помощника" not in js
+
+
+def test_back_goes_where_you_came_from():
+    """Пит 28.11: «из профиля попал в события, из событий в календарь. Если зашёл из профиля — вернуться в профиль»."""
+    js = read("cabinet.js")
+    assert "function backTo(" in js and "history.back()" in js and "remember(hash" in js
+    assert "function backLink" in js and 'return backTo("meetings"' in js   # «назад» больше не прибит к календарю
