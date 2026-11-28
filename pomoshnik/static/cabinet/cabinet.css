@@ -517,3 +517,12 @@ select { width: 100%; min-height: 44px; padding: 9px 12px; border-radius: var(--
 .journal-fields dd { margin: 0; overflow-wrap: anywhere; }
 .journal-block { display: grid; gap: 4px; }
 @media (max-width: 600px) { .journal-fields { grid-template-columns: 1fr; } .journal-fields dd { margin-bottom: 6px; } }
+
+/* письма, которые ждут руководителя: красная рамка (правило), вложения, черновики */
+.mail-row-btn--you { border: 2px solid #d64545; border-left-width: 4px; border-radius: 8px; margin: 4px 6px; width: calc(100% - 12px); }
+.mail-read--you { border: 2px solid #d64545; border-radius: 12px; padding: 14px; }
+.mail-you-rule { margin: 0 0 10px; color: #b03030; overflow-wrap: anywhere; }
+.mail-files { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.mail-file { display: inline-block; padding: 4px 10px; border: 1px solid var(--line); border-radius: 8px; background: rgba(255, 255, 255, .7);
+  font-size: .85rem; overflow-wrap: anywhere; color: var(--ink); text-decoration: none; }
+.mail-compose input[type=file] { min-height: 44px; padding: 8px; }

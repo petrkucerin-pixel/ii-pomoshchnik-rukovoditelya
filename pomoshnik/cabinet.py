@@ -142,7 +142,7 @@ def _incoming(a: Assistant) -> list[dict]:
                     "category": ap.get("category", ""), "action": act["kind"].removeprefix("mail_") if act else None,
                     "reason": ap.get("reason") or (act["summary"].removeprefix(subject + " — ") if act else ""),
                     "status": _letter_status(a, act, ap, verdicts, held, released, deferred),
-                    "deleted": r["external_id"] in gone})
+                    "deleted": r["external_id"] in gone, "attachments": pl.get("attachments") or []})
     return out
 
 
@@ -162,6 +162,54 @@ def deleted_letters(a: Assistant) -> set[str]:
         if x["kind"] in ("mail_deleted", "mail_restored"):
             state[x["payload"]["id"]] = x["kind"] == "mail_deleted"
     return {k for k, v in state.items() if v}
+
+
+def drafts(a: Assistant) -> dict:
+    """Черновики руководителя: последнее сохранение каждого, удалённые и отправленные — нет."""
+    cur: dict[str, dict] = {}
+    for x in a.j.actions():
+        pl = x["payload"] or {}
+        if x["kind"] == "draft_saved":
+            cur[pl["draft_id"]] = {**pl, "at": _iso(x["at"])}
+        elif x["kind"] == "draft_deleted":
+            cur.pop(pl.get("draft_id"), None)
+    return {"drafts": sorted(cur.values(), key=lambda d: d["at"], reverse=True)}
+
+
+def reply_draft(a: Assistant, letter_id: str) -> dict | None:
+    """Готовый текст ответа на входящее письмо. Письмо ждёт решения руководителя — два варианта (согласие и отказ)
+    из карточки решения; иначе — один ответ от модели в стиле руководителя. Готовый ответ запоминается в журнале."""
+    row = a.j.conn.execute("SELECT id, payload FROM events WHERE channel = 'mail' AND external_id = ?",
+                           (letter_id,)).fetchone()
+    if not row:
+        return None
+    eid, pl = row["id"], json.loads(row["payload"])
+    g = next((x for x in a.groups() if eid in x["event_ids"]), None)
+    if g:
+        if not g["prepared"]:
+            a.prepare_decisions(only={g["key"]})
+            g = next(x for x in a.groups() if x["key"] == g["key"])
+        p = g["prepared"] or {}
+        return {"mode": "decision", "event_id": g["event_id"], "advice": p.get("advice", "нет совета"),
+                "yes": p.get("draft_yes") or p.get("draft") or "", "no": p.get("draft_no") or "",
+                "unverified": p.get("unverified", [])}
+    for x in reversed(a.j.actions()):
+        if x["kind"] == "reply_draft" and x["payload"].get("letter_id") == letter_id:
+            return {"mode": "reply", "text": x["payload"]["text"], "unverified": x["payload"].get("unverified", [])}
+    from . import decisions as dq
+    from .writer import audience_of
+    letter = f"{pl.get('subject', '')}\n{pl.get('body', '')}"
+    srcs = dq.sources(letter, goals=a.p.goals, tasks=a.tasks, meetings=a.meetings, memory=a.memory, org=a.p.org,
+                      sender_email=pl.get("from", ""), today=a.today(), exclude={letter_id})
+    rules = ""
+    try:
+        rules = a.writer.rules_text("reply", audience_of(a.p.org, pl.get("from", "")))
+    except Exception:                    # правила стиля — подсказка, без них ответ всё равно пишется
+        rules = ""
+    d = dq.reply_draft(a.llm, pl.get("from_name") or pl.get("from", ""), letter, srcs, a.p.style, a.p.name, rules)
+    a._log("reply_draft", path="now", event_id=eid, summary=f"черновик ответа: {pl.get('subject', '')}",
+           payload={"letter_id": letter_id, "text": d["text"], "unverified": d["unverified"]})
+    return {"mode": "reply", **d}
 
 
 def contacts(a: Assistant) -> dict:
@@ -200,7 +248,8 @@ def _outgoing(a: Assistant) -> list[dict]:
                     "subject": pl.get("subject", ""), "body": pl.get("body", ""), "category": pl.get("kind", ""),
                     "action": "отправлено", "reason": f"шаблон «{t.title}»" if t else "",
                     "reply_to": pl.get("reply_to_id") or (ext.get(eid) if eid else None),
-                    "status": {"kind": by, "label": label}, "deleted": f"out-{x['id']}" in gone})
+                    "status": {"kind": by, "label": label}, "deleted": f"out-{x['id']}" in gone,
+                    "attachments": pl.get("attachments") or []})
     return out
 
 

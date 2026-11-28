@@ -32,6 +32,8 @@ def answer(system, user):
             return {"facts": [{"topic": "Облако Плюс", "kind": "партнёр", "what": "ждём до 12.12",
                                "quote": "Договор на подписи у юристов"}]}
         return {"facts": []}
+    if system.startswith("Ты помощник руководителя. Напиши ответ"):
+        return {"text": "Спасибо, принял. Вернусь с ответом до 99.99."}
     if "шаблон" in system.lower():
         return {"reply": "Сделал короче.", "subject": "Fwd: {тема}", "body": "{имя}, возьмите в работу. {zzz}"}
     subj = user.split("Тема: ", 1)[1].split("\n", 1)[0]
@@ -561,3 +563,71 @@ def test_reply_and_new_letter_go_out_as_leader(env):
     assert [x for x in c.get("/api/mail").json()["letters"] if x["direction"] == "out"][-1]["reply_to"] is None
     assert c.post("/api/mail/send", json={"to": "не адрес", "subject": "x", "body": "y"}).status_code == 422
     assert c.post("/api/mail/send", json={"to": "p02@company.example", "subject": "", "body": ""}).status_code == 422
+
+
+
+# ---------------- почта: черновики, вложения, готовый ответ ----------------
+def test_drafts_save_update_delete_and_send_removes_draft(env):
+    c, _, _ = env
+    did = c.post("/api/mail/drafts", json={"to": "p02@company.example", "subject": "КП", "body": "Ольга,"}).json()["draft_id"]
+    c.post("/api/mail/drafts", json={"draft_id": did, "to": "p02@company.example", "subject": "КП", "body": "Ольга, зайди."})
+    ds = c.get("/api/mail/drafts").json()["drafts"]
+    assert len(ds) == 1 and ds[0]["body"] == "Ольга, зайди."
+    c.post("/api/mail/send", json={"to": "p02@company.example", "subject": "КП", "body": "Ольга, зайди.", "draft_id": did})
+    assert c.get("/api/mail/drafts").json()["drafts"] == []
+    d2 = c.post("/api/mail/drafts", json={"subject": "x"}).json()["draft_id"]
+    c.delete(f"/api/mail/drafts/{d2}")
+    assert c.get("/api/mail/drafts").json()["drafts"] == []
+
+
+def test_attachments_go_out_and_can_be_downloaded(env):
+    import base64
+    c, _, _ = env
+    data = base64.b64encode(b"%PDF-1.4 test").decode()
+    r = c.post("/api/mail/send", json={"to": "p02@company.example", "subject": "Файл", "body": "Смотри.",
+                                       "files": [{"name": "кп.pdf", "type": "application/pdf", "data": data}]})
+    assert r.status_code == 200
+    out = [x for x in c.get("/api/mail").json()["letters"] if x["direction"] == "out"][-1]
+    f = out["attachments"][0]
+    assert f["name"] == "кп.pdf" and f["size"] == len(b"%PDF-1.4 test")
+    got = c.get(f"/api/mail/file/{f['key']}/{f['name']}")
+    assert got.status_code == 200 and got.content == b"%PDF-1.4 test"
+    assert c.get(f"/api/mail/file/{'0' * 32}/x.pdf").status_code == 404
+    assert c.get("/api/mail/file/../etc/passwd").status_code in (404, 405)        # путь наружу не отдаётся
+    assert c.get("/api/mail/file/" + "a" * 32 + "/..%2F..%2Fpyproject.toml").status_code == 404
+    big = base64.b64encode(b"0" * (11 * 1024 * 1024)).decode()
+    assert c.post("/api/mail/send", json={"to": "p02@company.example", "subject": "x", "body": "y",
+                                          "files": [{"name": "big.bin", "data": big}]}).status_code == 422
+
+
+def test_incoming_attachment_is_stored_and_listed(env):
+    from types import SimpleNamespace
+    c, a, _ = env
+    a.mail = ReplyBox([SimpleNamespace(id="att-1", from_name="Клиент «ТехноСтрой»", from_email="client2@tehnostroy.example",
+                                       to="p01@company.example", subject="ТЗ на внедрение", body="ТЗ во вложении.",
+                                       received=a.clock.now(), attachments=(("тз.docx", "application/msword", b"DOCX"),))])
+    a.process_inbox()
+    m = next(x for x in c.get("/api/mail").json()["letters"] if x["id"] == "att-1")
+    f = m["attachments"][0]
+    assert f["name"] == "тз.docx" and c.get(f"/api/mail/file/{f['key']}/{f['name']}").content == b"DOCX"
+
+
+def test_reply_is_prewritten_decision_gives_both_variants(env):
+    c, a, _ = env
+    r = c.get("/api/mail/m002/reply-draft").json()                      # обычное письмо — ответ от модели
+    assert r["mode"] == "reply" and r["text"].startswith("Спасибо") and r["unverified"] == ["99.99"]
+    assert c.get("/api/mail/m002/reply-draft").json()["text"] == r["text"]   # второй раз модель не зовём
+    first = c.get("/api/today").json()["decisions"][0]
+    letter_id = a.j.event(first["event_id"])["external_id"]
+    d = c.get(f"/api/mail/{letter_id}/reply-draft").json()
+    assert d["mode"] == "decision" and d["event_id"] == first["event_id"] and "yes" in d and "no" in d
+    assert c.get("/api/mail/nope/reply-draft").status_code == 404
+
+
+def test_edited_reply_is_logged_for_style_learning(env):
+    c, a, _ = env
+    sug = c.get("/api/mail/m002/reply-draft").json()["text"]
+    c.post("/api/mail/send", json={"to": "client2@tehnostroy.example", "subject": "Re: КП", "body": "Спасибо, Ольга ответит.",
+                                   "reply_to": "m002", "suggested": sug})
+    edits = [x for x in a.j.actions() if x["kind"] == "reply_draft_edit"]
+    assert edits and edits[-1]["payload"]["draft"] == sug and edits[-1]["payload"]["letter_id"] == "m002"

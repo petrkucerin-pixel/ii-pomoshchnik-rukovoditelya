@@ -67,10 +67,11 @@ class CombinedMailbox:
                 self.last_error = str(e)
         return letters
 
-    def send(self, to, subject, body, in_reply_to=None):
+    def send(self, to, subject, body, in_reply_to=None, attachments=()):
+        kw = {"attachments": attachments} if attachments else {}
         if self.real and not to.lower().endswith(".example"):
-            return self.real.send(to, subject, body, in_reply_to=in_reply_to)
-        return self.stub.send(to, subject, body, in_reply_to=in_reply_to)
+            return self.real.send(to, subject, body, in_reply_to=in_reply_to, **kw)
+        return self.stub.send(to, subject, body, in_reply_to=in_reply_to, **kw)
 
 
 class CsvInboxes:
@@ -194,6 +195,7 @@ class Stand:
     def _new_assistant(self) -> Assistant:
         a = Assistant(self.profile, self.llm, self.pult, self.mail, self.journal, self.protocols,
                       calendar_path=TASK / "calendar.ics", tasks_path=TASK / "tasks.csv", memory=self.memory)
+        a.files_dir = RUNTIME / f"{self.profile_id}_files"     # вложения писем
         a.recheck_queue()                   # правила профиля могли поменяться: очередь пересматривается по новым
         from .voice import LocalWhisper, available
         a.transcribe = LocalWhisper() if available() else None     # голос в Telegram (TASK_16)
@@ -771,11 +773,92 @@ def api_mail():
         return cabinet.mail(stand.assistant)
 
 
+class FileIn(BaseModel):
+    name: str
+    type: str = "application/octet-stream"
+    data: str                         # base64
+
+
 class LetterIn(BaseModel):
     to: str
     subject: str
     body: str
     reply_to: str | None = None
+    files: list[FileIn] = []
+    draft_id: str | None = None       # отправленный черновик исчезает из «Черновиков»
+    suggested: str = ""               # что предлагал помощник: правка уходит в обучение стиля
+
+
+class DraftIn(BaseModel):
+    draft_id: str | None = None
+    to: str = ""
+    subject: str = ""
+    body: str = ""
+    reply_to: str | None = None
+
+
+MAX_FILES_BYTES = 10 * 1024 * 1024
+
+
+def _decode_files(files: list[FileIn]) -> list[tuple[str, str, bytes]]:
+    import base64
+    out, total = [], 0
+    for f in files:
+        try:
+            data = base64.b64decode(f.data.split(",", 1)[-1], validate=False)
+        except ValueError:
+            raise HTTPException(422, f"не удалось прочитать вложение «{f.name}»") from None
+        total += len(data)
+        if total > MAX_FILES_BYTES:
+            raise HTTPException(422, "вложения больше 10 МБ")
+        out.append((f.name, f.type or "application/octet-stream", data))
+    return out
+
+
+@app.get("/api/mail/drafts")
+def api_drafts():
+    with stand.lock:
+        return cabinet.drafts(stand.assistant)
+
+
+@app.post("/api/mail/drafts")
+def api_draft_save(d: DraftIn):
+    import uuid
+    did = d.draft_id or f"draft-{uuid.uuid4().hex[:10]}"
+    with stand.lock:
+        stand.journal.log_action("draft_saved", actor="human", path="now", summary=d.subject or "(без темы)",
+                                 payload={"draft_id": did, "to": d.to, "subject": d.subject, "body": d.body,
+                                          "reply_to": d.reply_to})
+    return {"ok": True, "draft_id": did}
+
+
+@app.delete("/api/mail/drafts/{draft_id}")
+def api_draft_delete(draft_id: str):
+    with stand.lock:
+        stand.journal.log_action("draft_deleted", actor="human", path="now", summary=draft_id,
+                                 payload={"draft_id": draft_id})
+    return {"ok": True}
+
+
+@app.get("/api/mail/file/{key}/{name}")
+def api_mail_file(key: str, name: str):
+    with stand.lock:
+        data = stand.assistant.load_file(key, name)
+    if data is None:
+        raise HTTPException(404, "вложение не найдено")
+    from fastapi.responses import Response
+    from urllib.parse import quote
+    return Response(data, media_type="application/octet-stream",
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
+
+
+@app.get("/api/mail/{letter_id}/reply-draft")
+def api_reply_draft(letter_id: str):
+    with stand.lock:
+        d = cabinet.reply_draft(stand.assistant, letter_id)
+    if d is None:
+        raise HTTPException(404, "такого письма нет")
+    return d
 
 
 _EMAIL = re.compile(r"[^@\s<>]+@[^@\s<>]+\.[^@\s<>]+")
@@ -802,8 +885,13 @@ def api_mail_send(x: LetterIn):
         raise HTTPException(422, "проверьте адрес получателя")
     if not x.subject.strip() and not x.body.strip():
         raise HTTPException(422, "пустое письмо")
+    files = _decode_files(x.files)
     with stand.lock:
-        stand.assistant.write_letter(to, x.subject.strip() or "(без темы)", x.body, x.reply_to)
+        stand.assistant.write_letter(to, x.subject.strip() or "(без темы)", x.body, x.reply_to, files=files,
+                                     draft=x.suggested)
+        if x.draft_id:
+            stand.journal.log_action("draft_deleted", actor="human", path="now", summary=x.draft_id,
+                                     payload={"draft_id": x.draft_id, "sent": True})
     return {"ok": True}
 
 

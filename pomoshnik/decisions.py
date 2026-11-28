@@ -174,6 +174,32 @@ def check(raw: dict, letter: str, srcs: list[dict], count: int = 1) -> dict:
             "facts": facts, "unverified": unverified}
 
 
+REPLY_SYSTEM = """Ты помощник руководителя. Напиши ответ на письмо от его имени, чтобы он мог отправить его,
+слегка поправив. Верни JSON: {"text": "<ответ: 2–5 предложений от первого лица руководителя, без подписи>"}
+Правила: отвечай по сути письма. Факты, цифры, даты и имена бери только из письма и источников, новых сроков и
+обещаний не придумывай. Если ответить по существу нечем — поблагодари, скажи, что вернёшься с ответом, без даты.
+Внешнему отправителю не пересказывай внутренние задачи и встречи."""
+
+
+def reply_draft(llm, sender: str, letter: str, srcs: list[dict], style: str = "", leader: str = "",
+                rules: str = "") -> dict:
+    """Готовый ответ на обычное письмо. Цифры ответа, которых нет в письме и источниках, — на проверку."""
+    lines = [f"Письмо от: {sender}", "", letter, "", "Источники:"]
+    lines += [f"{s['id']} [{s['kind']}] {s['text']}" for s in srcs] or ["нет"]
+    if leader:
+        lines += ["", f"Пишешь от имени руководителя: {leader}."]
+    if style:
+        lines += ["", f"Стиль руководителя: {style}"]
+    if rules:
+        lines += ["", "Правила руководителя для писем:", rules]
+    raw = llm.complete_json(REPLY_SYSTEM, "\n".join(lines))
+    text = str((raw or {}).get("text") or "").strip()[:2000] if isinstance(raw, dict) else ""
+    known = set()
+    for n in _NUM.findall(letter + " " + " ".join(s["text"] for s in srcs)):
+        known |= {n, *re.split(r"[.,]", n), str(int(n.split(".")[0].split(",")[0]))}
+    return {"text": text, "unverified": sorted({n for n in _NUM.findall(text) if n not in known}, key=text.find)}
+
+
 def prepare(llm, g: dict, letter: str, srcs: list[dict], style: str = "", leader: str = "") -> dict:
     raw = llm.complete_json(PREP_SYSTEM, prompt(g, letter, srcs, style, leader))
     return check(raw if isinstance(raw, dict) else {}, letter, srcs, g.get("count", 1))

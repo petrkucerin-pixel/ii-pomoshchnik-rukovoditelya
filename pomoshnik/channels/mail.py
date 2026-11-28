@@ -31,6 +31,37 @@ class Email:
     body: str
     received: datetime
     in_reply_to: str | None = None
+    attachments: tuple = ()          # (имя файла, тип, байты)
+
+
+def _attachments(message: EmailMessage) -> tuple:
+    out = []
+    for part in message.iter_attachments():
+        name = part.get_filename()
+        if not name:
+            continue
+        data = part.get_payload(decode=True) or b""
+        out.append((name, part.get_content_type(), data))
+    return tuple(out)
+
+
+def compose(sender: str, to: str, subject: str, body: str, in_reply_to: str | None = None,
+            attachments=()) -> EmailMessage:
+    """Письмо для SMTP: текст и вложения (имя, тип, байты)."""
+    message = EmailMessage(policy=policy.SMTP)
+    message["From"] = sender
+    message["To"] = to
+    message["Subject"] = subject
+    message["Message-ID"] = make_msgid(domain=message["From"].addresses[0].domain)
+    message["Date"] = datetime.now(timezone.utc)
+    if in_reply_to:
+        message["In-Reply-To"] = in_reply_to
+        message["References"] = in_reply_to
+    message.set_content(body, charset="utf-8")
+    for name, ctype, data in attachments or ():
+        main, _, sub = (ctype or "application/octet-stream").partition("/")
+        message.add_attachment(data, maintype=main, subtype=sub or "octet-stream", filename=name)
+    return message
 
 
 class _VisibleText(HTMLParser):
@@ -99,6 +130,7 @@ def parse_message(raw: bytes) -> Email:
         body=_body(message),
         received=received,
         in_reply_to=message.get("In-Reply-To"),
+        attachments=_attachments(message),
     )
 
 
@@ -150,10 +182,12 @@ class OutlookStub:
     def fetch_new(self) -> list[Email]:
         return self._inbox.fetch_new()
 
-    def send(self, to: str, subject: str, body: str, in_reply_to: str | None = None) -> str:
+    def send(self, to: str, subject: str, body: str, in_reply_to: str | None = None, attachments=()) -> str:
         message_id = make_msgid(domain="outlook.invalid")
         record = {"id": message_id, "to": to, "subject": subject,
                   "body": body, "in_reply_to": in_reply_to}
+        if attachments:
+            record["attachments"] = [name for name, _, _ in attachments]
         with self._lock:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             with self._path.open("a", encoding="utf-8", newline="\n") as stream:
@@ -278,18 +312,9 @@ class YandexMailbox:
                 # Ответ сервера может содержать пароль. Исключаем его и из traceback.
                 raise RuntimeError(f"Не удалось прочитать почту Яндекса по IMAP ({failure})")
 
-    def send(self, to: str, subject: str, body: str, in_reply_to: str | None = None) -> str:
-        message = EmailMessage(policy=policy.SMTP)
-        message["From"] = self._address
-        message["To"] = to
-        message["Subject"] = subject
-        message_id = make_msgid(domain=message["From"].addresses[0].domain)
-        message["Message-ID"] = message_id
-        message["Date"] = datetime.now(timezone.utc)
-        if in_reply_to:
-            message["In-Reply-To"] = in_reply_to
-            message["References"] = in_reply_to
-        message.set_content(body, charset="utf-8")
+    def send(self, to: str, subject: str, body: str, in_reply_to: str | None = None, attachments=()) -> str:
+        message = compose(self._address, to, subject, body, in_reply_to, attachments)
+        message_id = message["Message-ID"]
 
         try:
             client = self._smtp_factory()

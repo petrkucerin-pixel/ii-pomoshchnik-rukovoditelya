@@ -268,6 +268,7 @@ class Assistant:
         self.decisions: list[dict] = decisions_from_journal(journal)   # письма, которые ждут руководителя
         self.held: list[dict] = held_from_journal(journal)              # передачи, ждущие решения руководителя
         self.prepared: dict[str, dict] = prepared_from_journal(journal)  # готовые решения по вопросам очереди
+        self.files_dir: Path | None = None        # куда класть вложения; задаёт стенд, в тестах — временная папка
         self.templates = Templates(profile.dir)
         self.digest: list[str] = digest_from_journal(journal, profile.org)   # что помощник сделал сам; переживает перезапуск
         self.risks: list[str] = []           # риски для целей руководителя от ревизора
@@ -384,7 +385,10 @@ class Assistant:
         letters = self.mail.fetch_new()
         counts: dict[str, int] = {}
         for e in letters:
-            eid, new = self.j.record_event("mail", e.id, letter_payload(e))
+            payload = letter_payload(e)
+            if getattr(e, "attachments", None):
+                payload["attachments"] = self.store_files(e.attachments)
+            eid, new = self.j.record_event("mail", e.id, payload)
             if not new:
                 continue
             cat, summ, conf = classify(self.llm, e.subject, e.body, e.from_name)
@@ -611,11 +615,11 @@ class Assistant:
         now = now or self.clock.now()
         return [g for g in self.groups() if not g["deferred_until"] or datetime.fromisoformat(g["deferred_until"]) <= now]
 
-    def prepare_decisions(self, limit: int | None = None) -> int:
+    def prepare_decisions(self, limit: int | None = None, only: set[str] | None = None) -> int:
         """Готовит решения по вопросам без подготовки: черновик, совет, факты с источниками. Один вызов модели на вопрос."""
         n = 0
         for g in self.groups():
-            if g["prepared"] or (limit is not None and n >= limit):
+            if g["prepared"] or (limit is not None and n >= limit) or (only is not None and g["key"] not in only):
                 continue
             e = letter_ns(self.j, g["event_ids"][-1])
             letter = f"{e.subject}\n{e.body}"
@@ -816,18 +820,49 @@ class Assistant:
                            "kind": "решение", "template": "", "message_id": mid})
 
     # ---------------- почта руководителя из кабинета ----------------
-    def write_letter(self, to: str, subject: str, body: str, reply_to: str | None = None) -> str:
-        """Письмо руководителя: ответ на входящее или новое. Подпись — его имя, в журнал как действие человека."""
+    def store_files(self, files) -> list[dict]:
+        """Вложения (имя, тип, байты) на диск по хешу содержимого. Возвращает описание для журнала и кабинета."""
+        import hashlib
+        out = []
+        for name, ctype, data in files or ():
+            key = hashlib.sha256(data).hexdigest()[:32]
+            safe = "".join("_" if ch in '\\/:*?"<>|' or ord(ch) < 32 else ch for ch in name)[:120] or "file"
+            if self.files_dir is not None:
+                d = self.files_dir / key
+                d.mkdir(parents=True, exist_ok=True)
+                (d / safe).write_bytes(data)
+            out.append({"name": safe, "type": ctype or "application/octet-stream", "size": len(data), "key": key})
+        return out
+
+    def load_file(self, key: str, name: str) -> bytes | None:
+        if self.files_dir is None or not re.fullmatch(r"[0-9a-f]{32}", key):
+            return None
+        p = self.files_dir / key / name
+        return p.read_bytes() if p.is_file() and p.parent == self.files_dir / key else None
+
+    def write_letter(self, to: str, subject: str, body: str, reply_to: str | None = None, files=(),
+                     draft: str = "") -> str:
+        """Письмо руководителя: ответ на входящее или новое. Подпись — его имя, в журнал как действие человека.
+        files — вложения (имя, тип, байты). draft — что предлагал помощник: правка уходит в обучение стиля."""
         eid, in_reply = None, None
         if reply_to:
             row = self.j.conn.execute("SELECT id FROM events WHERE channel = 'mail' AND external_id = ?",
                                       (reply_to,)).fetchone()
             eid, in_reply = (row["id"], reply_to) if row else (None, None)
         full = body.strip() + "\n\n— " + self.p.name
-        mid = self.send_mail.send(to, subject, full, in_reply_to=in_reply)
+        kw = {"attachments": tuple(files)} if files else {}
+        mid = self.send_mail.send(to, subject, full, in_reply_to=in_reply, **kw)
         self._log("mail_sent", actor="human", path="now", event_id=eid, summary=f"{to}: {subject}",
                   payload={"to": to, "subject": subject, "body": full, "in_reply_to": in_reply,
-                           "reply_to_id": in_reply, "kind": "ваше_письмо", "template": "", "message_id": mid})
+                           "reply_to_id": in_reply, "kind": "ваше_письмо", "template": "", "message_id": mid,
+                           "attachments": self.store_files(files)})
+        if draft and draft.strip() != body.strip():
+            self._log("reply_draft_edit", actor="human", path="now", event_id=eid, summary=f"{to}: правка ответа",
+                      payload={"to": to, "draft": draft.strip(), "text": body.strip(), "letter_id": in_reply})
+            try:                                 # правка сразу становится правилом для следующего ответа
+                self.writer.learn_pending()
+            except Exception:
+                logging.getLogger(__name__).exception("обучение стиля на правке ответа")
         return mid
 
     # ---------------- задачи: решения руководителя из кабинета ----------------
