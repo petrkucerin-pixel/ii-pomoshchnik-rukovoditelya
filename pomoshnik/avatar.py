@@ -11,7 +11,9 @@ from datetime import datetime
 import httpx
 
 API = "https://api.liveavatar.com"
-VOICE_DAVID = "09ca964c"   # префикс id голоса David — проверен Питом на русском 25.11
+VOICE_DAVID = "09ca964c"
+# Готовые аватары LiveAvatar, которые показываем в «Мои аватары» рядом с обученными
+PRESET_AVATARS = ["dff45d08-bc9d-4527-bb54-1781aef8553b"]      # David (Friendly) — на нём шли первые встречи   # префикс id голоса David — проверен Питом на русском 25.11
 
 
 @dataclass(frozen=True)
@@ -171,6 +173,14 @@ class LiveAvatar:
                 break
             ts = nxt
         return out
+
+    def avatars(self) -> list[dict]:
+        """Аватары аккаунта: обученные на руководителе. Новый появляется здесь сам, когда LiveAvatar его обучит."""
+        d = self._req("GET", "/v1/avatars", params={"page_size": 100})
+        return d.get("results", d if isinstance(d, list) else [])
+
+    def avatar(self, avatar_id: str) -> dict:
+        return self._req("GET", f"/v1/avatars/{avatar_id}")
 
     def credits(self) -> float:
         return float(self._req("GET", "/v1/users/credits")["credits_left"])

@@ -698,11 +698,114 @@ def edits(a: Assistant) -> dict:
     return {"protocol_edits": pe, "template_edits": te}
 
 
+# ---------------- Профиль: карточка руководителя, штат (Пит 28.11) ----------------
+CARD_FIELDS = ("name", "title", "about", "email", "phone", "address")
+
+
+def card(a: Assistant) -> dict:
+    """Кто руководитель и чем занимается. Правки руководителя — в журнале, последняя главнее файла профиля."""
+    p, org = a.p, a.p.org
+    leader = org.leader if org else None
+    goals = "; ".join(g.rstrip(".").lower() for g in p.goals)
+    base = {"name": p.name, "title": p.title, "about": f"{p.title[:1].upper() + p.title[1:]}. Отвечает за: {goals}."
+            if goals else p.title, "email": org.email_of(leader) if leader else "", "phone": "", "address": ""}
+    saved = next((x["payload"] for x in reversed(a.j.actions()) if x["kind"] == "profile_card"), {})
+    out = {k: saved.get(k, base[k]) for k in CARD_FIELDS}
+    return out | {"goals": p.goals, "style": p.style, "plan_time": p.plan_time, "week_time": p.week_time}
+
+
+def card_problems(d: dict) -> str:
+    if not d.get("name", "").strip():
+        return "напишите имя"
+    if d.get("email") and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", d["email"].strip()):
+        return "почта выглядит неверно"
+    if d.get("phone") and not re.fullmatch(r"[+\d\s()\-]{5,25}", d["phone"].strip()):
+        return "в телефоне только цифры, пробелы, скобки, + и -"
+    if any(len(str(d.get(k, ""))) > (2000 if k == "about" else 200) for k in CARD_FIELDS):
+        return "слишком длинный текст"
+    return ""
+
+
+def apply_card(a: Assistant) -> None:
+    """Имя и должность из карточки — в профиль помощника: подпись в письмах, аватар, Telegram."""
+    c = card(a)
+    a.p.name, a.p.title = c["name"], c["title"]
+
+
+def save_card(a: Assistant, d: dict) -> dict:
+    clean = {k: str(d.get(k, "")).strip() for k in CARD_FIELDS}
+    a._log("profile_card", actor="human", path="now", summary="Вы обновили карточку руководителя", payload=clean)
+    apply_card(a)
+    return card(a)
+
+
+def staff(a: Assistant) -> dict:
+    """Штат: руководство, моя команда, коллеги — с тем, что сейчас на каждом (задачи, письма)."""
+    org = a.p.org
+    if not org:
+        return {"groups": [], "total": 0}
+    today = a.today()
+    tasks_by: dict[str, list] = {}
+    for t, _ in all_tasks(a):
+        tasks_by.setdefault(t.owner, []).append(t)
+    letters: dict[str, list] = {}
+    for x in a.j.actions():
+        if x["kind"].startswith("mail_") and x["kind"] != "mail_sent" and x["event_id"]:
+            ev = (a.j.event(x["event_id"]) or {}).get("payload") or {}
+            letters.setdefault((ev.get("from") or "").lower(), []).append(ev.get("received") or "")
+    def person(p):
+        email = org.email_of(p)
+        ts = [t for t in tasks_by.get(p.name, []) if t.status not in DONE]
+        ls = sorted(set(letters.get(email.lower(), [])))
+        return {"id": p.id, "name": p.name, "position": p.position, "email": email, "role": p.role,
+                "tasks_open": len(ts), "tasks_late": sum(1 for t in ts if t.due < today or t.status == "просрочена"),
+                "letters": len(ls), "last_letter": ls[-1][:10] if ls else None}
+    groups = [("Руководство", "руководитель руководителя"), ("Моя команда", "подчинённый"), ("Коллеги", "коллега")]
+    out = [{"title": title, "people": [person(p) for p in org.people if p.role == role]} for title, role in groups]
+    return {"groups": out, "total": sum(len(g["people"]) for g in out)}
+
+
+def chosen_avatar(journal, default: str) -> str:
+    """Аватар, которого выбрал руководитель в «Мои аватары»; не выбирал — из настроек стенда."""
+    return next((x["payload"]["avatar_id"] for x in reversed(journal.actions()) if x["kind"] == "avatar_choice"), default)
+
+
+_AVATAR_STATUS = {"ACTIVE": "готов", "DEPLOYING": "обучается — появится, когда будет готов",
+                  "PENDING": "обучается — появится, когда будет готов", "FAILED": "обучение не удалось"}
+
+
+def avatars(la, current: str, presets: list[str]) -> dict:
+    """Мои аватары: обученные на руководителе (их список растёт сам) и готовые аватары LiveAvatar."""
+    rows, note = [], ""
+    try:
+        own = la.avatars() if la else []
+        extra = []
+        for aid in presets + ([current] if current else []):
+            if aid and aid not in {x["id"] for x in own + extra}:
+                try:
+                    extra.append(la.avatar(aid))
+                except Exception:
+                    pass
+        for x, source in [(x, "Обучен на вас") for x in own] + [(x, "Готовый аватар LiveAvatar") for x in extra]:
+            st = x.get("status", "")
+            rows.append({"id": x["id"], "name": x.get("name", "").replace(" (Friendly)", ""), "source": source,
+                         "type": "по фото" if x.get("type") == "IMAGE" else "по видео",
+                         "status": st, "status_text": _AVATAR_STATUS.get(st, st.lower()), "ready": st == "ACTIVE",
+                         "preview": x.get("preview_url") or "", "current": x["id"] == current})
+    except Exception as e:                      # нет связи с LiveAvatar — показываем, что знаем
+        note = f"LiveAvatar сейчас недоступен ({type(e).__name__}) — список обновится позже."
+        if current:
+            rows.append({"id": current, "name": "Текущий аватар", "source": "", "type": "", "status": "",
+                         "status_text": "нет связи", "ready": True, "preview": "", "current": True})
+    return {"current": current, "avatars": rows, "note": note}
+
+
 def profile(a: Assistant) -> dict:
     p = a.p
     return {"id": p.id, "name": p.name, "title": p.title, "goals": p.goals, "confirm": sorted(p.confirm),
             "rules": {k: {"action": r.action, "delegate_to": r.delegate_to, "source": r.source} for k, r in p.rules.items()},
-            "plan_time": p.plan_time, "week_time": p.week_time, "style": p.style}
+            "plan_time": p.plan_time, "week_time": p.week_time, "style": p.style,
+            "staff_total": len(p.org.people) - 1 if p.org else 0}
 
 
 # ---------------- Профиль → «Правила» (Пит 28.11: «большая кнопка, проваливаемся и читаем внутри») ----------------

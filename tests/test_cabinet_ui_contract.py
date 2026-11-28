@@ -13,7 +13,7 @@ STATIC = Path(srv.__file__).resolve().parent / "static" / "cabinet"
 SECTIONS = {"today": "Сегодня", "mail": "Переписка", "meetings": "Совещания", "memory": "Память", "profile": "Профиль"}
 ENDPOINTS = ["/api/today", "/api/decisions/", "/api/mail", "/api/style", "/api/style/teach", "/api/style/rules/", "/api/meetings",
              "/api/meetings/transcript", "/api/protocols", "/approve", "/reject", "/edit", "/api/tasks", "/api/memory",
-             "/api/edits", "/api/profile", "/api/profile/rules", "/api/profile/journal", "/api/metrics", "/api/journal", "/lead"]
+             "/api/edits", "/api/profile", "/api/profile/rules", "/api/profile/journal", "/api/profile/card", "/api/profile/staff", "/api/profile/avatars", "/api/profile/avatar", "/api/metrics", "/api/journal", "/lead"]
 
 
 def read(name):
@@ -141,3 +141,10 @@ def test_back_goes_where_you_came_from():
     js = read("cabinet.js")
     assert "function backTo(" in js and "history.back()" in js and "remember(hash" in js
     assert "function backLink" in js and 'return backTo("meetings"' in js   # «назад» больше не прибит к календарю
+
+
+def test_profile_card_staff_avatars():
+    """Пит 28.11: описание руководителя с правкой; «Штат сотрудников» и «Мои аватары» — отдельными кнопками."""
+    js = read("cabinet.js")
+    for x in ('"#profile/staff"', '"#profile/avatars"', 'sub === "staff"', 'sub === "avatars"', "Изменить", "Выбрать для встреч"):
+        assert x in js, x

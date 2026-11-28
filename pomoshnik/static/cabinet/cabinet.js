@@ -1347,8 +1347,92 @@ function journalRow(x) {
   return box;
 }
 
+// ---------------- Профиль: карточка руководителя, штат, мои аватары (Пит 28.11) ----------------
+function leaderCard(host) {
+  load(host, async mount => {
+    const c = await api("/api/profile/card");
+    const contact = (label, value, href) => value ? el("div", "contact", el("span", "muted", label),
+      href ? Object.assign(el("a", "", value), {href}) : el("span", "", value)) : null;
+    const view = card(c.name, "profile",
+      el("p", "lead", c.title),
+      el("p", "", c.about),
+      el("div", "contacts", contact("Почта", c.email, "mailto:" + c.email), contact("Телефон", c.phone, "tel:" + c.phone.replace(/[^\d+]/g, "")),
+        contact("Адрес", c.address)),
+      !c.phone || !c.address ? hint("Добавьте телефон и адрес — нажмите «Изменить».") : null,
+      el("h3", "", "Цели"), bullets(c.goals, "Цели не указаны."),
+      el("h3", "", "Как писать от моего имени"), el("p", "", c.style),
+      el("h3", "", "Ритм"), el("p", "", "План дня · " + c.plan_time + " · итог недели · " + c.week_time),
+      el("div", "actions", button("Изменить", () => edit(), "button-ghost")));
+    function edit() {
+      const form = el("form", "stack"), error = feedback();
+      const inputs = {};
+      const fieldOf = (key, label, type = "text", rows = 0) => {
+        const input = rows ? el("textarea") : el("input");
+        if (rows) input.rows = rows; else input.type = type;
+        input.value = c[key] || "";
+        inputs[key] = input;
+        return field(label, input);
+      };
+      form.append(fieldOf("name", "Имя"), fieldOf("title", "Должность"), fieldOf("about", "Чем занимаюсь", "text", 3),
+        fieldOf("email", "Почта", "email"), fieldOf("phone", "Телефон", "tel"), fieldOf("address", "Адрес"), error,
+        el("div", "actions", formSubmit(form, "Сохранить", () => submitAction(form, error, async () => {
+          await api("/api/profile/card", "PUT", Object.fromEntries(Object.entries(inputs).map(([k, i]) => [k, i.value])));
+          announce("Карточка сохранена");
+          leaderCard(host);
+        })), button("Отмена", () => leaderCard(host), "button-ghost")));
+      mount.replaceChildren(card("Изменить карточку", "edit",
+        hint("Имя и должность помощник подставляет в письма и представляется ими на встречах."), form));
+    }
+    mount.replaceChildren(view);
+  });
+}
+
+function staffPage(host) {
+  load(host, async mount => {
+    const d = await api("/api/profile/staff");
+    const person = p => el("div", "row staff-row",
+      el("strong", "", p.name), el("p", "", p.position),
+      meta(p.email, p.tasks_open ? "задач в работе · " + p.tasks_open : "задач нет",
+        p.tasks_late ? el("span", "late", "просрочено · " + p.tasks_late) : null,
+        p.letters ? "писем · " + p.letters + (p.last_letter ? ", последнее " + dateLabel(p.last_letter) : "") : "писем не было"));
+    mount.replaceChildren(profileBack(),
+      el("div", "rules-head", el("h2", "", "Штат сотрудников"),
+        el("p", "lead", "С кем работает помощник: кому передаёт письма, кого спрашивает о задачах и чьи письма решаете только вы.")),
+      el("div", "dashboard", ...d.groups.map(g => card(g.title + " · " + g.people.length, "profile", rows(g.people, person, "Никого нет.")))),
+      hint("Штат берётся из оргструктуры (" + d.total + " человек)."));
+  });
+}
+
+function avatarsPage(host) {
+  load(host, async mount => {
+    const d = await api("/api/profile/avatars");
+    const tileOf = x => {
+      const img = el("div", "avatar-face");
+      if (x.preview) { const i = el("img"); i.src = x.preview; i.alt = ""; i.loading = "lazy"; img.append(i); }
+      else img.append(icon("profile"));
+      const box = el("article", "card t-card avatar-card" + (x.current ? " avatar-current" : ""), img,
+        el("strong", "", x.name), meta(x.source, x.type),
+        el("p", x.ready ? "" : "late", x.current ? "Ведёт ваши встречи" : x.status_text),
+        x.current ? null : button(x.ready ? "Выбрать для встреч" : "Ещё не готов", async () => {
+          await api("/api/profile/avatar", "PUT", {avatar_id: x.id});
+          announce("Теперь встречи ведёт " + x.name);
+          avatarsPage(host);
+        }, x.ready ? "" : "button-ghost"));
+      if (!x.ready) box.querySelector("button").disabled = true;
+      return box;
+    };
+    mount.replaceChildren(profileBack(),
+      el("div", "rules-head", el("h2", "", "Мои аватары"),
+        el("p", "lead", "Каким аватаром помощник заходит на встречи. Когда LiveAvatar обучит нового аватара на вас, он появится здесь сам.")),
+      d.note ? hint(d.note) : null,
+      el("div", "avatars", ...d.avatars.map(tileOf)));
+  });
+}
+
 function profilePage(host, sub = "") {
   if (sub === "rules") return rulesPage(host);
+  if (sub === "staff") return staffPage(host);
+  if (sub === "avatars") return avatarsPage(host);
   if (sub === "journal") return journalPage(host);
   if (sub === "metrics") return metricsPage(host);
   load(host, async mount => {
@@ -1358,9 +1442,12 @@ function profilePage(host, sub = "") {
     const metricsTile = tile("#profile/metrics", "chart", "Метрики",
       "Сколько работы помощник забрал у вас — круговые диаграммы, цифры обновляются сами.",
       "Без вас · " + pct + " %", "Освобождено · " + nf(metrics.hours_saved) + " ч", "Правок · " + metrics.leader_edits);
-    const profile = card(p.name, "profile", hint(p.title), el("h3", "", "Цели"), bullets(p.goals, "Цели не указаны."),
-      el("h3", "", "Стиль общения"), el("p", "", p.style), el("h3", "", "Время плана"),
-      el("p", "", "На день · " + p.plan_time), el("p", "", "На неделю · " + p.week_time));
+    const profile = el("div");
+    leaderCard(profile);
+    const staffTile = tile("#profile/staff", "profile", "Штат сотрудников",
+      "Руководство, ваша команда и коллеги: кто на чём сейчас, у кого просрочки.", "Человек · " + (p.staff_total ?? "—"));
+    const avatarsTile = tile("#profile/avatars", "edit", "Мои аватары",
+      "Каким аватаром помощник заходит на встречи. Новый обученный появится сам.");
     const rules = tile("#profile/rules", "list", "Правила",
       "Что решаете только вы, что помощник делает сам и кому передаёт.",
       "Только вы · " + r.summary.only_me, "Сам · " + r.summary.auto,
@@ -1369,7 +1456,7 @@ function profilePage(host, sub = "") {
     const log = tile("#profile/journal", "clock", "Журнал действий",
       "Всё, что помощник сделал сам, и все ваши решения — по дням, обычными словами.",
       last ? "Последнее · " + stamp(last.at) : "Записей пока нет");
-    mount.replaceChildren(el("div", "tiles", rules, metricsTile, log), profile);
+    mount.replaceChildren(profile, el("div", "tiles", rules, metricsTile, log, staffTile, avatarsTile));
   });
 }
 

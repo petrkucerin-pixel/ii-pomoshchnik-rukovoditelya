@@ -186,10 +186,11 @@ class Stand:
         self.lock = threading.RLock()        # бот и кабинет работают с одним помощником
         self.assistant: Assistant = self._new_assistant()
         self.status = {"bot": "не запущен", "last_poll": None, "error": "", "autopilot": "не запущен"}
+        avatar_id = cabinet.chosen_avatar(self.journal, os.environ.get("LIVEAVATAR_AVATAR_ID", ""))   # «Мои аватары»
         self.robot = RobotManager(lambda: self.assistant, _avatar_client, self.lock,
-                                  avatar_id=os.environ.get("LIVEAVATAR_AVATAR_ID", ""), shots_dir=RUNTIME)
+                                  avatar_id=avatar_id, shots_dir=RUNTIME)
         self.autopilot = Autopilot(lambda: self.assistant, _avatar_client, robot=self.robot,
-                                   avatar_id=os.environ.get("LIVEAVATAR_AVATAR_ID", ""),
+                                   avatar_id=avatar_id,
                                    base_url=os.environ.get("STAND_URL", "https://194-87-110-81.sslip.io"),
                                    categories={c.strip() for c in os.environ.get("AVATAR_CATEGORIES", "операционная").split(",")
                                                if c.strip()})
@@ -203,6 +204,11 @@ class Stand:
                                          "buttons": [b.label for row in (buttons or []) for b in row]})
 
     def _new_assistant(self) -> Assistant:
+        a = self._make_assistant()
+        cabinet.apply_card(a)               # имя и должность из карточки руководителя
+        return a
+
+    def _make_assistant(self) -> Assistant:
         a = Assistant(self.profile, self.llm, self.pult, self.mail, self.journal, self.protocols,
                       calendar_path=TASK / "calendar.ics", tasks_path=TASK / "tasks.csv", memory=self.memory)
         a.files_dir = RUNTIME / f"{self.profile_id}_files"     # вложения писем
@@ -262,7 +268,7 @@ class Stand:
 
     def start_autopilot(self):
         """Аватар сам по календарю (TASK_09): шаг раз в 20 секунд, если настроен LiveAvatar."""
-        avatar_id = os.environ.get("LIVEAVATAR_AVATAR_ID", "")
+        avatar_id = current_avatar_id()
         if not (avatar_id and os.environ.get("HEYGEN_LiveAvatar_API_KEY")):
             self.status["autopilot"] = "LiveAvatar не настроен"
             return
@@ -374,6 +380,11 @@ def post_meeting(title: str = Form(...), transcript: str = Form(...), minutes_ag
     return RedirectResponse("/classic", status_code=303)
 
 
+def current_avatar_id() -> str:
+    """Аватар для встреч: выбор руководителя в «Мои аватары», иначе LIVEAVATAR_AVATAR_ID из .env."""
+    return cabinet.chosen_avatar(stand.journal, os.environ.get("LIVEAVATAR_AVATAR_ID", ""))
+
+
 def _avatar_client():
     from .avatar import LiveAvatar
     key = os.environ.get("HEYGEN_LiveAvatar_API_KEY", "")
@@ -383,7 +394,7 @@ def _avatar_client():
 @app.get("/avatar", response_class=HTMLResponse)
 def avatar_page(title: str = "Еженедельная встреча команды", uid: str | None = None):
     la = _avatar_client()
-    avatar_id = os.environ.get("LIVEAVATAR_AVATAR_ID", "")
+    avatar_id = current_avatar_id()
     if not la or not avatar_id:
         return HTMLResponse("<p>Аватар не настроен: нет ключа LiveAvatar или id аватара.</p>", status_code=503)
     status = la.avatar_status(avatar_id)
@@ -1156,6 +1167,64 @@ def api_profile_journal_detail(action_id: int):
     if d is None:
         raise HTTPException(404, "нет такой записи")
     return d
+
+
+class CardIn(BaseModel):
+    name: str
+    title: str = ""
+    about: str = ""
+    email: str = ""
+    phone: str = ""
+    address: str = ""
+
+
+@app.get("/api/profile/card")
+def api_profile_card():
+    with stand.lock:
+        return cabinet.card(stand.assistant)
+
+
+@app.put("/api/profile/card")
+def api_profile_card_save(body: CardIn):
+    d = body.model_dump()
+    why = cabinet.card_problems(d)
+    if why:
+        raise HTTPException(422, why)
+    with stand.lock:
+        return cabinet.save_card(stand.assistant, d)
+
+
+@app.get("/api/profile/staff")
+def api_profile_staff():
+    with stand.lock:
+        return cabinet.staff(stand.assistant)
+
+
+@app.get("/api/profile/avatars")
+def api_profile_avatars():
+    from .avatar import PRESET_AVATARS
+    return cabinet.avatars(_avatar_client(), current_avatar_id(), PRESET_AVATARS)
+
+
+class AvatarIn(BaseModel):
+    avatar_id: str
+
+
+@app.put("/api/profile/avatar")
+def api_profile_avatar(body: AvatarIn):
+    from .avatar import PRESET_AVATARS
+    d = cabinet.avatars(_avatar_client(), current_avatar_id(), PRESET_AVATARS)
+    row = next((x for x in d["avatars"] if x["id"] == body.avatar_id), None)
+    if row is None:
+        raise HTTPException(404, "такого аватара нет")
+    if not row["ready"]:
+        raise HTTPException(409, f"аватар ещё не готов: {row['status_text']}")
+    with stand.lock:
+        stand.journal.log_action("avatar_choice", actor="human", path="now",
+                                 summary=f"Вы выбрали аватара для встреч: {row['name']}",
+                                 payload={"avatar_id": row["id"], "name": row["name"]})
+        stand.robot.avatar_id = stand.autopilot.avatar_id = row["id"]
+    return cabinet.avatars(_avatar_client(), current_avatar_id(), PRESET_AVATARS)
 
 
 @app.get("/api/profile/rules")
