@@ -148,3 +148,8 @@ def test_profile_card_staff_avatars():
     js = read("cabinet.js")
     for x in ('"#profile/staff"', '"#profile/avatars"', 'sub === "staff"', 'sub === "avatars"', "Изменить", "Выбрать для встреч"):
         assert x in js, x
+
+
+def test_tile_and_page_share_labels():
+    js = read("cabinet.js")
+    assert js.count("ruleFacts(") >= 3 and js.count("metricFacts(") >= 2 and '"Сам · "' not in js

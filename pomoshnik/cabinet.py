@@ -827,9 +827,11 @@ def profile(a: Assistant) -> dict:
 RULE_GROUPS = [("делегировать", "Передаю ответственному", "Письмо уходит сотруднику, вы видите это в сводке."),
                ("авто", "Отвечаю сам", "Короткий ответ от вашего имени, без вас."),
                ("в_сводку", "Читаю и кладу в сводку", "Не отвечаю, но то, что важно, будет в утренней сводке."),
-               ("игнорировать", "Пропускаю", "Рассылки и то, что не требует действий.")]
+               ("игнорировать", "Пропускаю", "Рассылки, спам и то, что не требует действий."),
+               ("уточнить", "Уточняю у отправителя", "Непонятное письмо снаружи — помощник сам спрашивает, что нужно.")]
 RULE_TITLES = {"доступы": "Доступы к системам", "календарь": "Перенос внутренних встреч", "клиенты": "Запросы клиентов",
                "отчёт": "Отчёты", "продажи": "Запросы по продажам", "рассылка": "Рассылки", "статус": "Статусы",
+               "спам": "Спам", "приглашение": "Приглашения", "": "Без категории",
                "обязательства_клиентам": "Обязательства клиентам"}
 
 
@@ -849,11 +851,14 @@ def _confirm_lines(p) -> dict[str, tuple[str, str]]:
 
 def rules(a: Assistant) -> dict:
     p, org = a.p, a.p.org
-    counts: dict[tuple[str, str], int] = {}
+    last: dict = {}                     # как в «Метриках»: одно письмо — один раз, по последнему разбору
     for x in a.j.actions():
         if x["kind"] in _ROUTES:
-            k = (x["kind"][5:], (x["payload"] or {}).get("category") or "")
-            counts[k] = counts.get(k, 0) + 1
+            last[x["event_id"] if x["event_id"] is not None else ("a", x["id"])] = x
+    counts: dict[tuple[str, str], int] = {}
+    for x in last.values():
+        k = (x["kind"][5:], (x["payload"] or {}).get("category") or "")
+        counts[k] = counts.get(k, 0) + 1
     to_me = {c: n for (act, c), n in counts.items() if act == "спросить_руководителя" for _ in [0]}
     lines = _confirm_lines(p)
     only_me = [{"key": k, "title": lines.get(k, (RULE_TITLES.get(k, readable_key(k)), ""))[0],
@@ -867,7 +872,12 @@ def rules(a: Assistant) -> dict:
             who = org.by_id.get(r.delegate_to) if org and r.delegate_to else None
             rs.append({"category": cat, "title": RULE_TITLES.get(cat, readable_key(cat)),
                        "to": {"name": who.name, "position": who.position} if who else None,
-                       "profile_line": r.source.rstrip(";. "), "letters": counts.get((action, cat), 0)})
+                       "profile_line": r.source.rstrip(";. "), "letters": counts.get((action, cat), 0), "own": False})
+        # письма, ушедшие так по правилу самого помощника (спам, служебные, «уточнить») — тоже видны, с пометкой
+        for (act, cat), n in sorted(counts.items()):
+            if act == action and cat not in {x["category"] for x in rs}:
+                rs.append({"category": cat, "title": RULE_TITLES.get(cat, readable_key(cat)), "to": None,
+                           "profile_line": "", "letters": n, "own": True})
         if rs:
             groups.append({"action": action, "title": title, "what": what, "rules": rs})
     total = sum(counts.values())
@@ -876,6 +886,7 @@ def rules(a: Assistant) -> dict:
     return {"only_me": only_me, "groups": groups,
             "fallback": {"text": "Для чего правила нет — спрашиваю вас и запоминаю, как вы решили.", "letters": unruled},
             "summary": {"only_me": len(only_me), "auto": sum(len(g["rules"]) for g in groups), "letters": total,
+                        "groups_letters": sum(x["letters"] for g in groups for x in g["rules"]),
                         "letters_to_you": asked, "letters_without_you": total - asked},
             "file": f"profiles/{p.id}/profile.md"}
 

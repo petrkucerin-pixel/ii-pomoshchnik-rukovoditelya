@@ -69,3 +69,17 @@ def test_read_marks_do_not_change_routing_numbers(env):
     assert c.get("/api/profile/rules").json()["summary"]["letters_to_you"] == rules_before["letters_to_you"]
     texts = [x["text"] for day in c.get("/api/profile/journal").json()["days"] for x in day["items"]]
     assert any(t.startswith("Уточнил у отправителя") for t in texts) and not any("mail_read" in t for t in texts)
+
+
+
+def test_tile_numbers_match_inside_and_metrics(env):
+    """Пит 28.11: «Только вы, Сам. Если уж заявляем, то внутри должно соответствовать и не наводить на доп вопросы»."""
+    c, a, _ = env
+    a.recheck_queue()                                   # повторный разбор не должен удваивать письма
+    s = c.get("/api/profile/rules").json()
+    m = c.get("/api/metrics").json()
+    assert s["summary"]["letters"] == m["letters"]                                   # одна цифра на обеих плитках
+    assert s["summary"]["letters_without_you"] == m["letters_without_leader"]
+    assert s["summary"]["groups_letters"] == s["summary"]["letters_without_you"]     # сумма по правилам = «Без вас»
+    assert sum(x["letters"] for x in s["only_me"]) + s["fallback"]["letters"] == s["summary"]["letters_to_you"]
+    assert s["summary"]["auto"] == sum(len(g["rules"]) for g in s["groups"])

@@ -1193,6 +1193,15 @@ function profileBack() {
   return backTo("profile", "Профиль");
 }
 
+// Одни подписи на плитке и внутри страницы (Пит 28.11: «Если уж заявляем, то внутри должно соответствовать»).
+const ruleFacts = s => ["Решаете только вы · " + s.only_me + " " + plural(s.only_me, ["тема", "темы", "тем"]),
+  "Помощник делает сам · " + s.auto + " " + plural(s.auto, ["правило", "правила", "правил"]),
+  "Без вас · " + s.letters_without_you + " из " + s.letters + " " + plural(s.letters, ["письма", "писем", "писем"])];
+const metricFacts = m => {
+  const pct = m.letters ? Math.round(100 * m.letters_without_leader / m.letters) : 0;
+  return ["Без вас · " + pct + " %", "Освобождённое время · " + nf(m.hours_saved) + " ч", "Правок руководителя · " + m.leader_edits];
+};
+
 // Профиль → Правила: что решаете только вы, что помощник делает сам и кому передаёт (Пит 28.11).
 function rulesPage(host) {
   load(host, async mount => {
@@ -1202,9 +1211,8 @@ function rulesPage(host) {
     const head = el("div", "rules-head",
       el("h2", "", "Правила помощника"),
       el("p", "lead", "Помощник решает сам всё, что вы ему разрешили, и приходит к вам только с тем, что можете решить только вы."),
-      el("div", "tile-facts", el("span", "", "Решаете только вы · " + s.only_me),
-        el("span", "", "Делаю сам · " + s.auto), el("span", "", "Без вас · " + s.letters_without_you + " из " + s.letters)));
-    const mine = card("Решаете только вы", "check",
+      el("div", "tile-facts", ...ruleFacts(s).map(t => el("span", "", t))));
+    const mine = card(ruleFacts(s)[0], "check",
       el("p", "reason", "Такие письма помощник не отправляет сам: готовит карточку с советом и черновиком, вы нажимаете «Согласовать» или «Отказать»."),
       rows(d.only_me, x => el("div", "row", el("strong", "", x.title),
         x.examples ? el("p", "", x.examples) : null, hint("Пришло вам на решение: " + letters(x.letters))), "Таких правил нет."));
@@ -1213,11 +1221,13 @@ function rulesPage(host) {
       rows(g.rules, r => el("div", "row", el("strong", "", r.title),
         r.to ? el("p", "", "→ " + r.to.name + ", " + r.to.position) : null,
         hint("По правилу: " + letters(r.letters)),
-        el("p", "muted", "В профиле: «" + r.profile_line + "»")), "")));
+        el("p", "muted", r.own ? "Правило самого помощника — в профиле его нет." : "В профиле: «" + r.profile_line + "»")), "")));
     const rest = card("Если правила нет", "profile", el("p", "", d.fallback.text),
       hint("Так пришло: " + letters(d.fallback.letters)),
       hint("Правила записаны в профиле руководителя (" + d.file + ") обычным текстом — менять их можно без программиста."));
-    mount.replaceChildren(profileBack(), head, el("div", "dashboard", stack(mine, rest), stack(...auto)));
+    const autoHead = el("div", "rules-head", el("h3", "", ruleFacts(s)[1]),
+      hint("Писем без вас по этим правилам: " + s.groups_letters + " — это цифра «Без вас» сверху."));
+    mount.replaceChildren(profileBack(), head, el("div", "dashboard", stack(mine, rest), stack(autoHead, ...auto)));
   });
 }
 
@@ -1277,10 +1287,10 @@ function donut(label) {
 function metricsPage(host) {
   const letters = donut("Куда ушли письма"), share = donut("Без вас"), hours = donut("Освобождено часов");
   const tiles = el("div", "metrics");
-  const stamp_ = hint("");
+  const stamp_ = hint(""), facts = el("div", "tile-facts");
   host.replaceChildren(profileBack(),
     el("div", "rules-head", el("h2", "", "Метрики помощника"),
-      el("p", "lead", "Сколько работы помощник забрал у вас. Цифры обновляются сами, как только он что-то делает."), stamp_),
+      el("p", "lead", "Сколько работы помощник забрал у вас. Цифры обновляются сами, как только он что-то делает."), facts, stamp_),
     el("div", "donuts",
       card("Без вас", "check", el("p", "reason", "Доля писем, которые помощник решил без вашего участия."), share.node),
       card("Куда ушли письма", "mail", el("p", "reason", "Что помощник сделал с каждым письмом."), letters.node),
@@ -1291,6 +1301,7 @@ function metricsPage(host) {
     let m;
     try { m = await api("/api/metrics"); } catch (e) { return; }
     const pct = m.letters ? Math.round(100 * m.letters_without_leader / m.letters) : 0;
+    facts.replaceChildren(...metricFacts(m).map(t => el("span", "", t)));     // те же цифры, что на плитке
     share.update([{label: "Без вас", value: m.letters_without_leader, text: nf(m.letters_without_leader, 0) + " писем"},
                   {label: "Пришло к вам", value: m.letters - m.letters_without_leader, color: "#d3e0f2",
                    text: nf(m.letters - m.letters_without_leader, 0) + " писем"}], pct + " %", "из " + m.letters + " писем");
@@ -1457,7 +1468,7 @@ function profilePage(host, sub = "") {
     const pct = metrics.letters ? Math.round(100 * metrics.letters_without_leader / metrics.letters) : 0;
     const metricsTile = tile("#profile/metrics", "chart", "Метрики",
       "Сколько работы помощник забрал у вас — круговые диаграммы, цифры обновляются сами.",
-      "Без вас · " + pct + " %", "Освобождено · " + nf(metrics.hours_saved) + " ч", "Правок · " + metrics.leader_edits);
+      ...metricFacts(metrics));
     const profile = el("div");
     leaderCard(profile);
     const staffTile = tile("#profile/staff", "profile", "Штат сотрудников",
@@ -1466,8 +1477,7 @@ function profilePage(host, sub = "") {
       "Каким аватаром помощник заходит на встречи. Новый обученный появится сам.");
     const rules = tile("#profile/rules", "list", "Правила",
       "Что решаете только вы, что помощник делает сам и кому передаёт.",
-      "Только вы · " + r.summary.only_me, "Сам · " + r.summary.auto,
-      "Без вас · " + r.summary.letters_without_you + " из " + r.summary.letters + " писем");
+      ...ruleFacts(r.summary));
     const last = journal.actions[0];
     const log = tile("#profile/journal", "clock", "Журнал действий",
       "Всё, что помощник сделал сам, и все ваши решения — по дням, обычными словами.",
