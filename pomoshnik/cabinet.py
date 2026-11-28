@@ -772,11 +772,16 @@ def _jtext(x: dict) -> str:
 def journal_feed(a: Assistant, *, who: str = "", group: str = "", limit: int = 300) -> dict:
     """Журнал для руководителя: по дням, новые сверху, копии одного действия подряд — одна строка с «×N»."""
     acts = [x for x in a.j.actions() if x["kind"] not in _HIDDEN]
-    counts = {"Помощник": sum(x["actor"] != "human" for x in acts), "Вы": sum(x["actor"] == "human" for x in acts)}
+    counts = {"Помощник": 0, "Вы": 0}         # считаем строки, которые видит руководитель, а не копии писем
     rows: list[dict] = []
+    last_seen: tuple | None = None
     for x in acts:
         item = {"at": x["at"].isoformat(), "who": "Вы" if x["actor"] == "human" else "Помощник",
                 "group": _jgroup(x["kind"]), "text": _jtext(x), "times": 1}
+        key = (item["who"], item["text"], item["at"][:10])
+        if key != last_seen:
+            counts[item["who"]] += 1
+            last_seen = key
         if who == "human" and item["who"] != "Вы" or who == "assistant" and item["who"] != "Помощник":
             continue
         if group and item["group"] != group:

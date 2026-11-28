@@ -22,6 +22,8 @@ def test_journal_reads_like_sentences_by_day(env):
     assert any(x["who"] == "Помощник" and x["text"].startswith("Передал ") for x in items)
     assert {x["group"] for x in items} <= set(d["groups"])
     assert d["counts"]["Вы"] >= 1 and d["counts"]["Помощник"] > d["counts"]["Вы"]
+    mine = flat(c.get("/api/profile/journal", params={"who": "human"}).json())
+    assert d["counts"]["Вы"] == len(mine)                               # счётчик = строки, а не копии писем
 
 
 def test_journal_filters(env):
