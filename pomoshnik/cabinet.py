@@ -128,6 +128,7 @@ def _incoming(a: Assistant) -> list[dict]:
     deferred = {eid: datetime.fromisoformat(g["deferred_until"]) for g in a.groups() if g.get("deferred_until")
                 and datetime.fromisoformat(g["deferred_until"]) > now for eid in g["event_ids"]}
     out = []
+    gone = deleted_letters(a)
     for r in rows:
         pl = json.loads(r["payload"])
         act = acts.get(r["id"])
@@ -140,7 +141,8 @@ def _incoming(a: Assistant) -> list[dict]:
                     "subject": subject, "body": pl.get("body", ""),
                     "category": ap.get("category", ""), "action": act["kind"].removeprefix("mail_") if act else None,
                     "reason": ap.get("reason") or (act["summary"].removeprefix(subject + " — ") if act else ""),
-                    "status": _letter_status(a, act, ap, verdicts, held, released, deferred)})
+                    "status": _letter_status(a, act, ap, verdicts, held, released, deferred),
+                    "deleted": r["external_id"] in gone})
     return out
 
 
@@ -150,11 +152,36 @@ SENT_LABELS = {"передача": ("assistant", "Помощник переда�
                "выяснение": ("assistant", "Помощник: что с задачей"), "можно_начинать": ("assistant", "Помощник: можно начинать"),
                "решение": ("you", "По вашему решению"), "протокол": ("you", "Протокол после вашего утверждения"),
                "приглашение": ("you", "Ваше приглашение на встречу"), "напоминание": ("you", "Напоминание по вашей кнопке"),
-               "поручение": ("you", "Ваше поручение")}
+               "поручение": ("you", "Ваше поручение"), "ваше_письмо": ("you", "Вы написали")}
+
+
+def deleted_letters(a: Assistant) -> set[str]:
+    """Письма, которые руководитель удалил в кабинете (последнее действие — удалить, а не восстановить)."""
+    state: dict[str, bool] = {}
+    for x in a.j.actions():
+        if x["kind"] in ("mail_deleted", "mail_restored"):
+            state[x["payload"]["id"]] = x["kind"] == "mail_deleted"
+    return {k for k, v in state.items() if v}
+
+
+def contacts(a: Assistant) -> dict:
+    """Адресная книга: оргструктура и все, кто нам писал. Себя руководитель в ней не видит."""
+    out: dict[str, dict] = {}
+    me = a.p.org.email_of(a.p.org.leader).lower() if a.p.org else ""
+    for p in (a.p.org.people if a.p.org else []):
+        e = a.p.org.email_of(p).lower()
+        out[e] = {"name": p.name, "email": e, "note": p.position}
+    for r in a.j.conn.execute("SELECT payload FROM events WHERE channel = 'mail'").fetchall():
+        pl = json.loads(r["payload"])
+        e = (pl.get("from") or "").lower()
+        if e and e not in out and "@" in e:
+            out[e] = {"name": pl.get("from_name") or e, "email": e, "note": "писал(а) нам"}
+    out.pop(me, None)
+    return {"contacts": sorted(out.values(), key=lambda x: x["name"].lower())}
 
 
 def _outgoing(a: Assistant) -> list[dict]:
-    out = []
+    out, gone = [], deleted_letters(a)
     ext = {}
     for x in a.j.actions():
         if x["kind"] != "mail_sent":
@@ -165,12 +192,15 @@ def _outgoing(a: Assistant) -> list[dict]:
         if eid and eid not in ext:
             ext[eid] = (a.j.event(eid) or {}).get("external_id")
         by, label = SENT_LABELS.get(pl.get("kind", ""), ("assistant", "Отправил помощник"))
+        if pl.get("reply_to_id"):            # письмо руководителя из кабинета: на какое входящее отвечает
+            ext[eid] = pl["reply_to_id"]
         out.append({"id": f"out-{x['id']}", "direction": "out", "at": _iso(x["at"]),
                     "from_name": a.signature.removeprefix("— "), "from_email": a.p.org.email_of(a.p.org.leader)
                     if a.p.org else "", "to_name": "", "to_email": pl.get("to", ""),
                     "subject": pl.get("subject", ""), "body": pl.get("body", ""), "category": pl.get("kind", ""),
                     "action": "отправлено", "reason": f"шаблон «{t.title}»" if t else "",
-                    "reply_to": ext.get(eid) if eid else None, "status": {"kind": by, "label": label}})
+                    "reply_to": pl.get("reply_to_id") or (ext.get(eid) if eid else None),
+                    "status": {"kind": by, "label": label}, "deleted": f"out-{x['id']}" in gone})
     return out
 
 

@@ -343,9 +343,10 @@ function todayPage(host, sub = "") {
 const statusChip = st => st ? el("span", "status-chip status-" + st.kind, st.label) : null;
 
 const MAIL_FOLDERS = [["inbox", "Входящие"], ["sent", "Отправленные"], ["newsletter", "Рассылки"],
-  ["spam", "Нежелательная почта"], ["style", "Как я пишу"]];
+  ["spam", "Нежелательная почта"], ["trash", "Удалённые"], ["style", "Как я пишу"]];
 
 function folderOf(m) {
+  if (m.deleted) return "trash";
   if (m.direction === "out") return "sent";
   if (m.group === "spam") return "spam";
   if (m.group === "newsletter") return "newsletter";
@@ -371,13 +372,44 @@ function received(iso, today) {
   return d === today ? iso.slice(11, 16) : d.slice(8, 10) + "." + d.slice(5, 7) + "." + d.slice(0, 4);
 }
 
-function readingPane(m, letters, onBack) {
+function composeForm(contacts, init, onDone, onCancel) {
+  const form = el("form", "mail-compose");
+  const to = el("input"), subject = el("input"), body = el("textarea"), error = feedback();
+  const list = el("datalist");
+  list.id = "mail-contacts";
+  for (const c of contacts) list.append(new Option(c.name + " · " + c.note, c.email));
+  to.setAttribute("list", "mail-contacts");
+  to.type = "email";
+  to.required = true;
+  to.value = init.to || "";
+  subject.value = init.subject || "";
+  body.rows = 10;
+  body.value = init.body || "";
+  const field = (label, input) => el("label", "field", el("span", "", label), input);
+  const send = button("Отправить", () => submitAction(form, error, async () => {
+    await api("/api/mail/send", "POST", {to: to.value, subject: subject.value, body: body.value, reply_to: init.reply_to || null});
+    announce("Письмо отправлено");
+    onDone();
+  }), "primary");
+  form.addEventListener("submit", e => { e.preventDefault(); send.click(); });
+  form.append(el("h2", "mail-read-subject", init.reply_to ? "Ответ" : "Новое сообщение"), list,
+    field("Кому", to), field("Тема", subject), field("Текст", body),
+    hint("Подпись «— " + (init.leader || "руководитель") + "» добавится сама."),
+    el("div", "actions", send, button("Отмена", onCancel, "quiet")), error);
+  setTimeout(() => (init.to ? body : to).focus(), 0);
+  return form;
+}
+
+function readingPane(m, letters, onBack, act) {
   const addr = (name, email) => [name, email ? "<" + email + ">" : ""].filter(Boolean).join(" ");
   const replies = m.direction === "in" ? letters.filter(x => x.direction === "out" && x.reply_to === m.id) : [];
   const source = m.direction === "out" && m.reply_to ? letters.find(x => x.direction === "in" && x.id === m.reply_to) : null;
   const who = m.direction === "out" ? (m.to_name || m.to_email) : m.from_name;
+  const tools = act ? el("div", "mail-read-tools",
+    m.direction === "in" && !m.deleted ? button("Ответить", () => act.reply(m), "primary") : null,
+    m.deleted ? button("Восстановить", () => act.restore(m)) : button("Удалить", () => act.remove(m))) : null;
   return el("article", "mail-read",
-    onBack ? button("← К списку", onBack, "quiet back-link") : null,
+    onBack ? button("← К списку", onBack, "quiet back-link") : null, tools,
     el("h2", "mail-read-subject", m.subject || "(без темы)"),
     el("div", "mail-read-head", avatar(who),
       el("div", "mail-read-from", el("strong", "", addr(m.from_name, m.from_email)),
@@ -396,7 +428,8 @@ function readingPane(m, letters, onBack) {
 function mailPage(host, folder = "") {
   if (!MAIL_FOLDERS.some(([k]) => k === folder)) folder = "inbox";
   load(host, async mount => {
-    const [{letters, groups}, td] = await Promise.all([api("/api/mail"), api("/api/today")]);
+    const [{letters, groups}, td, book] = await Promise.all([api("/api/mail"), api("/api/today"),
+      api("/api/contacts").catch(() => ({contacts: []}))]);
     const today = td.day;
     const titles = Object.fromEntries((groups || []).map(g => [g.key, g.title]));
     const inFolder = f => letters.filter(m => folderOf(m) === f)
@@ -434,11 +467,25 @@ function mailPage(host, folder = "") {
     const list = el("div", "mail-list");
     const head = el("div", "mail-head", el("span", ""), el("span", "", "От"), el("span", "", "Тема"), el("span", "", "Получено"));
     const focused = m => m.direction === "out" || !m.status || m.status.kind !== "info";
+    const back = () => { pane.hidden = true; listCol.hidden = false; };
+    const showPane = node => {
+      pane.replaceChildren(node);
+      if (phone.matches) { listCol.hidden = true; pane.hidden = false; window.scrollTo(0, 0); }
+    };
+    const compose = init => showPane(composeForm(book.contacts, {...init, leader: td.leader},
+      () => mailPage(host, "sent"), () => (opened ? open(letters.find(x => x.id === opened)) : (phone.matches ? back() : pane.replaceChildren()))));
+    const act = {
+      reply: m => compose({to: m.from_email, reply_to: m.id,
+        subject: /^re:/i.test(m.subject || "") ? m.subject : "Re: " + (m.subject || ""),
+        body: "\n\n> " + (m.from_name || "") + ", " + stamp(m.at) + ":\n> " + (m.body || "").split("\n").join("\n> ")}),
+      remove: async m => { await api("/api/mail/" + encodeURIComponent(m.id) + "/delete", "POST"); announce("Письмо удалено"); mailPage(host, folder); },
+      restore: async m => { await api("/api/mail/" + encodeURIComponent(m.id) + "/restore", "POST"); announce("Письмо восстановлено"); mailPage(host, folder); },
+    };
     function open(m) {
+      if (!m) return;
       opened = m.id;
       list.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.id === m.id)));
-      pane.replaceChildren(readingPane(m, letters, phone.matches ? () => { pane.hidden = true; listCol.hidden = false; } : null));
-      if (phone.matches) { listCol.hidden = true; pane.hidden = false; window.scrollTo(0, 0); }
+      showPane(readingPane(m, letters, phone.matches ? back : null, act));
     }
     function render() {
       const q = search.value.trim().toLowerCase();
@@ -471,7 +518,8 @@ function mailPage(host, folder = "") {
     }
     search.addEventListener("input", render);
     pane.hidden = phone.matches;
-    listCol.replaceChildren(el("div", "mail-tools", search, filter), tabs, head, list);
+    listCol.replaceChildren(el("div", "mail-new", button("Новое сообщение", () => compose({}), "primary")),
+      el("div", "mail-tools", search, filter), tabs, head, list);
     render();
   });
 }

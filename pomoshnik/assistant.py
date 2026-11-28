@@ -815,6 +815,21 @@ class Assistant:
                   payload={"to": g["email"], "subject": subject, "body": full, "in_reply_to": g["id"],
                            "kind": "решение", "template": "", "message_id": mid})
 
+    # ---------------- почта руководителя из кабинета ----------------
+    def write_letter(self, to: str, subject: str, body: str, reply_to: str | None = None) -> str:
+        """Письмо руководителя: ответ на входящее или новое. Подпись — его имя, в журнал как действие человека."""
+        eid, in_reply = None, None
+        if reply_to:
+            row = self.j.conn.execute("SELECT id FROM events WHERE channel = 'mail' AND external_id = ?",
+                                      (reply_to,)).fetchone()
+            eid, in_reply = (row["id"], reply_to) if row else (None, None)
+        full = body.strip() + "\n\n— " + self.p.name
+        mid = self.send_mail.send(to, subject, full, in_reply_to=in_reply)
+        self._log("mail_sent", actor="human", path="now", event_id=eid, summary=f"{to}: {subject}",
+                  payload={"to": to, "subject": subject, "body": full, "in_reply_to": in_reply,
+                           "reply_to_id": in_reply, "kind": "ваше_письмо", "template": "", "message_id": mid})
+        return mid
+
     # ---------------- задачи: решения руководителя из кабинета ----------------
     def task_action(self, task_id: str, task: str, owner: str, due: date, action: str, new_due: date | None = None):
         """«Напомнить» — письмо исполнителю; «перенести» и «выполнена» — запись в журнал поверх задачи."""

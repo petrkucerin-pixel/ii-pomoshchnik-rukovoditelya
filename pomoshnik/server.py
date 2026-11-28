@@ -8,6 +8,7 @@ import html
 import json
 import logging
 import os
+import re
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -744,6 +745,54 @@ def api_decide(event_id: int, d: DecisionIn):
 def api_mail():
     with stand.lock:
         return cabinet.mail(stand.assistant)
+
+
+class LetterIn(BaseModel):
+    to: str
+    subject: str
+    body: str
+    reply_to: str | None = None
+
+
+_EMAIL = re.compile(r"[^@\s<>]+@[^@\s<>]+\.[^@\s<>]+")
+
+
+@app.get("/api/contacts")
+def api_contacts():
+    with stand.lock:
+        return cabinet.contacts(stand.assistant)
+
+
+def _letter_exists(a, letter_id: str) -> bool:
+    if letter_id.startswith("out-"):
+        n = letter_id[4:]
+        return n.isdigit() and any(x["id"] == int(n) for x in a.j.actions() if x["kind"] == "mail_sent")
+    return a.j.conn.execute("SELECT 1 FROM events WHERE channel = 'mail' AND external_id = ?",
+                            (letter_id,)).fetchone() is not None
+
+
+@app.post("/api/mail/send")
+def api_mail_send(x: LetterIn):
+    to = x.to.strip()
+    if not _EMAIL.fullmatch(to):
+        raise HTTPException(422, "проверьте адрес получателя")
+    if not x.subject.strip() and not x.body.strip():
+        raise HTTPException(422, "пустое письмо")
+    with stand.lock:
+        stand.assistant.write_letter(to, x.subject.strip() or "(без темы)", x.body, x.reply_to)
+    return {"ok": True}
+
+
+@app.post("/api/mail/{letter_id}/{action}")
+def api_mail_action(letter_id: str, action: Literal["delete", "restore"]):
+    """Удалить письмо в кабинете (папка «Удалённые») или вернуть. Настоящий почтовый ящик не меняется."""
+    with stand.lock:
+        a = stand.assistant
+        if not _letter_exists(a, letter_id):
+            raise HTTPException(404, "такого письма нет")
+        a.j.log_action("mail_deleted" if action == "delete" else "mail_restored", actor="human", path="now",
+                       summary=letter_id, payload={"id": letter_id})
+    return {"ok": True}
 
 
 @app.get("/api/templates")

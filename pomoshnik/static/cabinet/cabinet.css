@@ -500,3 +500,8 @@ select { width: 100%; min-height: 44px; padding: 9px 12px; border-radius: var(--
 .journal-groups { flex-wrap: wrap; }
 .journal-row p { margin: 4px 0 0; }
 .journal-mine { border-left: 3px solid var(--ink, #13407e); padding-left: 10px; }
+.mail-new { padding: 10px 10px 0; }
+.mail-new button { width: 100%; }
+.mail-read-tools { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.mail-compose { display: grid; gap: 10px; }
+.mail-compose textarea { min-height: 200px; }

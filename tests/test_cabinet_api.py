@@ -524,3 +524,40 @@ def test_sent_letters_say_who_initiated_and_link_to_incoming(env):
     assert fwd["status"]["kind"] == "assistant" and fwd["reply_to"]                 # к какому входящему
     mine = [x for x in out if x["status"]["label"] == "По вашему решению"]
     assert mine and mine[-1]["reply_to"]
+
+
+# ---------------- почта: удалить, ответить, написать, адресная книга ----------------
+def test_contacts_have_org_and_external_correspondents(env):
+    c, _, _ = env
+    cs = c.get("/api/contacts").json()["contacts"]
+    by = {x["email"]: x for x in cs}
+    assert by["p02@company.example"]["name"] == "Ольга Смирнова" and by["p02@company.example"]["note"]
+    assert "client1@romashka.example" in by                                     # писал нам — есть в книге
+    assert "p01@company.example" not in by                                      # себя в книге нет
+    assert len(by) == len(cs)                                                   # без повторов
+
+
+def test_delete_hides_letter_and_restore_brings_it_back(env):
+    c, _, _ = env
+    inbox = lambda: {x["id"]: x for x in c.get("/api/mail").json()["letters"] if x["direction"] == "in"}
+    assert not inbox()["m002"]["deleted"]
+    assert c.post("/api/mail/m002/delete").json()["ok"]
+    assert inbox()["m002"]["deleted"]
+    c.post("/api/mail/m002/restore")
+    assert not inbox()["m002"]["deleted"]
+    assert c.post("/api/mail/nope/delete").status_code == 404
+
+
+def test_reply_and_new_letter_go_out_as_leader(env):
+    c, a, _ = env
+    r = c.post("/api/mail/send", json={"to": "client1@romashka.example", "subject": "Re: Сроки запуска интеграции",
+                                       "body": "Вернусь с датой завтра.", "reply_to": "m001"})
+    assert r.status_code == 200
+    out = [x for x in c.get("/api/mail").json()["letters"] if x["direction"] == "out"]
+    mine = out[-1]
+    assert mine["to_email"] == "client1@romashka.example" and mine["reply_to"] == "m001"
+    assert mine["status"] == {"kind": "you", "label": "Вы написали"} and a.p.name in mine["body"]
+    c.post("/api/mail/send", json={"to": "p02@company.example", "subject": "КП", "body": "Ольга, зайди."})
+    assert [x for x in c.get("/api/mail").json()["letters"] if x["direction"] == "out"][-1]["reply_to"] is None
+    assert c.post("/api/mail/send", json={"to": "не адрес", "subject": "x", "body": "y"}).status_code == 422
+    assert c.post("/api/mail/send", json={"to": "p02@company.example", "subject": "", "body": ""}).status_code == 422
