@@ -1355,7 +1355,7 @@ function leaderCard(host) {
       href ? Object.assign(el("a", "", value), {href}) : el("span", "", value)) : null;
     const view = card(c.name, "profile",
       el("p", "lead", c.title),
-      el("p", "", c.about),
+      c.about ? el("p", "", c.about) : hint("Расскажите, чем вы занимаетесь, — нажмите «Изменить»."),
       el("div", "contacts", contact("Почта", c.email, "mailto:" + c.email), contact("Телефон", c.phone, "tel:" + c.phone.replace(/[^\d+]/g, "")),
         contact("Адрес", c.address)),
       !c.phone || !c.address ? hint("Добавьте телефон и адрес — нажмите «Изменить».") : null,
@@ -1421,11 +1421,11 @@ function avatarsPage(host) {
       if (!x.ready) box.querySelector("button").disabled = true;
       return box;
     };
-    mount.replaceChildren(profileBack(),
+    mount.replaceChildren(...[profileBack(),          // replaceChildren не пропускает null
       el("div", "rules-head", el("h2", "", "Мои аватары"),
         el("p", "lead", "Каким аватаром помощник заходит на встречи. Когда LiveAvatar обучит нового аватара на вас, он появится здесь сам.")),
       d.note ? hint(d.note) : null,
-      el("div", "avatars", ...d.avatars.map(tileOf)));
+      el("div", "avatars", ...d.avatars.map(tileOf))].filter(Boolean));
   });
 }
 
