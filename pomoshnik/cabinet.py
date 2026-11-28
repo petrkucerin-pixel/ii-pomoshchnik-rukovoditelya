@@ -974,7 +974,7 @@ def journal_detail(a: Assistant, action_id: int) -> dict | None:
         f("Причина", pl.get("reason") or pl.get("error"))
         f("Участники", ", ".join(pl.get("participants") or []))
         f("Протокол", f"№{pl['protocol_id']}" if pl.get("protocol_id") else "")
-        if pl.get("uid"):
+        if pl.get("uid") and any(m.uid == pl["uid"] for m in a.meetings):   # встречи робота без календаря — без ссылки
             links.append({"label": "Открыть встречу", "href": "#meetings/m/" + pl["uid"]})
         title = pl.get("title") or _jtext(x)
     elif k == "task_action":

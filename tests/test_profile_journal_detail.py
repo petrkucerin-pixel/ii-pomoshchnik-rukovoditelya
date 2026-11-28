@@ -72,3 +72,16 @@ def test_task_row_explains_itself_without_technical_fields(env):
     assert not any(f["label"].lower() in ("task id", "action") for f in d["fields"])
     assert any(b["label"].startswith("Письмо исполнителю") for b in d["blocks"])
     assert d["links"][0]["href"].startswith("#meetings/t/")
+
+
+
+def test_meeting_link_only_for_meetings_in_calendar(env):
+    c, a, _ = env
+    a.j.log_action("robot_started", path="now", summary="Проверка: робот заходит в Телемост",
+                   payload={"uid": "e2e@test", "title": "Проверка", "link": "https://telemost.yandex.ru/j/1"})
+    uid = a.meetings[0].uid
+    a.j.log_action("robot_started", path="now", summary=f"{a.meetings[0].title}: робот заходит в Телемост",
+                   payload={"uid": uid, "title": a.meetings[0].title, "link": "https://telemost.yandex.ru/j/2"})
+    rows = [x for x in flat(c.get("/api/profile/journal").json()) if x["text"].startswith("Аватар зашёл")]
+    links = {detail(c, x)["title"]: detail(c, x)["links"] for x in rows}
+    assert links["Проверка"] == [] and links[a.meetings[0].title][0]["href"] == "#meetings/m/" + uid
