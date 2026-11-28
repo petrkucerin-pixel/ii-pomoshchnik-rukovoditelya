@@ -631,3 +631,24 @@ def test_edited_reply_is_logged_for_style_learning(env):
                                    "reply_to": "m002", "suggested": sug})
     edits = [x for x in a.j.actions() if x["kind"] == "reply_draft_edit"]
     assert edits and edits[-1]["payload"]["draft"] == sug and edits[-1]["payload"]["letter_id"] == "m002"
+
+
+def test_backfill_returns_sent_letters_missing_in_journal(env, tmp_path):
+    import importlib.util, json as _j
+    spec = importlib.util.spec_from_file_location("backfill", ROOT / "deploy" / "backfill_sent.py")
+    bf = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bf)
+    c, a, _ = env
+    db = srv.RUNTIME / "ivan_petrov.sqlite"
+    out = tmp_path / "out.jsonl"
+    before = len([x for x in c.get("/api/mail").json()["letters"] if x["direction"] == "out"])
+    out.write_text("\n".join(_j.dumps(r, ensure_ascii=False) for r in [
+        {"id": "<lost-1@x>", "to": "p02@company.example", "subject": "Fwd: Запрос коммерческого предложения", "body": "b",
+         "in_reply_to": "m002"},
+        {"id": "<lost-2@x>", "to": "p07@company.example", "subject": "Вопрос по отчёту: Дашборд", "body": "b",
+         "in_reply_to": None}]), encoding="utf-8")
+    assert bf.main(str(db), str(out)) == 2 and bf.main(str(db), str(out)) == 0          # повтор ничего не добавляет
+    sent = [x for x in c.get("/api/mail").json()["letters"] if x["direction"] == "out"]
+    assert len(sent) == before + 2
+    fwd = next(x for x in sent if x["subject"] == "Fwd: Запрос коммерческого предложения" and x["reply_to"] == "m002")
+    assert fwd["status"]["label"] == "Помощник передал исполнителю"
